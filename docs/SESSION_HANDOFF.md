@@ -48,6 +48,12 @@
 2. Создать `docs/ROADMAP.md` (milestones, начиная с M0/M1).
 3. После подтверждения — переходить к коду: pyproject.toml + базовый pipeline + CLI.
 
+## Git baseline
+
+Создан первый commit: **`539a26d`** — `chore: establish project planning baseline`
+(7 файлов: .gitignore, README.md, data/.gitkeep, docs/{AI_WORKFLOW,DECISIONS,PROJECT_STATE,SESSION_HANDOFF}.md).
+Working tree чистый.
+
 ## На чём именно остановилась работа
 
-Работа остановлена **после согласования MVP-архитектуры и создания системы постоянной памяти**, перед созданием ARCHITECTURE.md / ROADMAP.md. Основной код не начинался (M0 не начат).
+Работа остановлена **после согласования MVP-архитектуры, создания системы постоянной памяти и фиксации baseline commit `539a26d`**, перед созданием ARCHITECTURE.md / ROADMAP.md. Основной код не начинался (M0 не начат).

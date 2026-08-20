@@ -26,8 +26,8 @@ telecom-news/
 
 - Репозиторий инициализирован (`git init` выполнен).
 - Ветка: `master`.
-- Коммитов **нет** (branch has no commits yet).
-- Все файлы в статусе `untracked`.
+- Создан baseline commit: **`539a26d`** — `chore: establish project planning baseline` (7 файлов, только документация + .gitignore + data/.gitkeep).
+- Working tree чистый.
 
 ## Текущий этап разработки
 
@@ -72,12 +72,10 @@ telecom-news/
 ```
 $ git status
 On branch master
-No commits yet
-Untracked files:
-  .gitignore, README.md, data/, docs/
+nothing to commit, working tree clean
 
-$ git log --oneline -5
-fatal: your current branch 'master' does not have any commits yet
+$ git log --oneline -3
+539a26d chore: establish project planning baseline
 ```
 
-**Hash последнего commit:** отсутствует (коммитов нет).
+**Hash последнего (baseline) commit:** `539a26d`
