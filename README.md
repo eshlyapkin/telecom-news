@@ -55,54 +55,45 @@
 
 ## Структура проекта
 
+Текущее состояние — **M0 Foundation завершён**: реализован только фундамент (package, доменная модель `Article`, конфигурация, logging, CLI skeleton, pytest). Остальные каталоги (`collectors/`, `processors/`, `storage/`) заполняются в M1–M2 по docs/ROADMAP.md.
+
 ```
 telecom-news/
 ├── README.md
 ├── .gitignore
-├── pyproject.toml              # Конфигурация Python-проекта
+├── pyproject.toml              # Конфигурация Python-проекта (src-layout, без runtime-зависимостей)
 ├── src/
 │   └── telecom_news/
-│       ├── __init__.py
-│       ├── main.py             # Точка входа (CLI/API)
-│       ├── config.py           # Конфигурация приложения
-│       ├── collectors/         # Модули сбора данных
-│       │   ├── __init__.py
-│       │   ├── base.py         # Базовый класс коллектора
-│       │   └── rss.py          # RSS-коллектор
-│       ├── processors/         # Конвейер обработки
-│       │   ├── __init__.py
-│       │   ├── deduplication.py
-│       │   ├── categorization.py
-│       │   └── pipeline.py     # Оркестрация конвейера
-│       ├── storage/            # Слой хранения
-│       │   ├── __init__.py
-│       │   ├── database.py     # Работа с БД
-│       │   └── models.py       # Модели данных
-│       └── (api/)              # опционально, только при подтверждении FastAPI
-├── tests/                      # Тесты
-│   ├── __init__.py
-│   ├── test_collectors.py
-│   ├── test_processors.py
-│   └── test_storage.py
+│       ├── __init__.py         # Версия пакета
+│       ├── __main__.py         # python -m telecom_news
+│       ├── cli.py              # CLI (argparse): --help, run/status — заглушки до M1–M4
+│       ├── config.py           # Конфигурация: пути, log level + env-переменные
+│       ├── logging_config.py   # Настройка stdlib logging
+│       └── models.py           # Доменная модель Article (без БД/persistence)
+├── tests/                      # pytest: smoke, models, config, logging (18 тестов)
 ├── data/                       # Локальные данные (не в git)
 │   └── .gitkeep
-└── docs/                       # Документация
-    └── architecture.md
+└── docs/                       # Документация (ARCHITECTURE.md, ROADMAP.md и др.)
 ```
 
 ## Требования
 
 - Python 3.10+
-- SQLite (по умолчанию) или PostgreSQL
+- SQLite — по умолчанию с M2 (пока не реализован)
 
 ## Быстрый старт
 
 ```bash
-# Установка зависимостей
-pip install -e .
+# Project-local окружение (системный Python не используется)
+python3 -m venv .venv          # или: uv venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"         # dev-зависимости: pytest
 
-# Запуск CLI (ручной запуск pipeline, отладка, dry-run)
+# Проверка CLI (M0: skeleton; команды run/status — заглушки до M1–M4)
 python -m telecom_news --help
+
+# Тесты
+pytest
 ```
 
 > HTTP API-сервер не входит в MVP и запускается только после подтверждения FastAPI (см. docs/DECISIONS.md, D-004).
