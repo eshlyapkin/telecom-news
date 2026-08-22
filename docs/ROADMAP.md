@@ -21,18 +21,18 @@
 **Цель:** минимальный технический фундамент приложения (без реальных новостей, LLM и Telegram).
 
 **Входит:**
-- `pyproject.toml` (Python 3.10+, src-layout; зависимости: httpx, feedparser, pytest; **без fastapi/uvicorn** — D-004)
-- Python package `src/telecom_news/`: `__init__.py` во всех пакетах (`collectors`, `processors`, `llm`, `storage`, `delivery`)
+- `pyproject.toml` (Python 3.10+, src-layout; **без внешних runtime-зависимостей** — только pytest как dev-зависимость; httpx/feedparser добавляются в M1, fastapi/uvicorn не входят в MVP — D-004)
+- Python package `src/telecom_news/`: `__init__.py` (субпакеты `collectors`, `processors`, `llm`, `storage`, `delivery` создаются вместе с их содержимым в M1–M4; пустые каталоги без файлов не отслеживаются Git'ом)
 - Удаление пустого каталога `src/telecom_news/api/` (не входит в MVP, D-004)
 - `config.py`: пути, LM Studio endpoint, env-переменные (без реальных вызовов)
-- Настройка logging (консоль + файл)
-- Базовая внутренняя модель `Article` (`storage/models.py`) — только dataclass/TypedDict, без БД
+- Настройка стандартного Python logging
+- Минимальная доменная модель `Article` (`src/telecom_news/models.py`) — только dataclass, без БД и persistence; storage-specific модели появятся в M2
 - CLI skeleton: `python -m telecom_news --help`, заглушки команд `run/status`
 - Тестовая инфраструктура (pytest) + минимальный smoke test
 
-**Явно НЕ входит:** реальные новости; LM Studio; Telegram; полный SQLite pipeline.
+**Явно НЕ входит:** httpx; feedparser; реальный RSS/API collector; SQLite; LM Studio; Telegram; scheduler; scraping; FastAPI.
 
-**Ожидаемые файлы:** `pyproject.toml`, `src/telecom_news/{__init__,main,config,logging_setup}.py`, `storage/models.py`, `tests/test_smoke.py`.
+**Ожидаемые файлы:** `pyproject.toml`, `src/telecom_news/{__init__,main,config,logging_setup,models}.py`, `tests/test_smoke.py`.
 
 **Зависимости:** завершение planning (это первый milestone).
 
@@ -55,6 +55,7 @@
 
 **Входит:**
 - Выбор **одного реального источника** (русскоязычного или англоязычного), регулярно публикующего материалы о SMS/messaging-рынке; фактическая проверка доступных вариантов: предпочтение — структурированный официальный интерфейс (RSS или API, D-007); scraping не используется, если RSS/API решает задачу
+- Добавление зависимостей `httpx` и `feedparser` в `pyproject.toml` (первый milestone, где они становятся необходимыми)
 - `collectors/base.py` (`RawItem`, таймауты, retry) и коллектор выбранного механизма (`collectors/rss.py` или `collectors/api.py`)
 - `processors/normalize.py`: `RawItem → Article` (нормализация URL, текст, язык ru/en, `content_hash`)
 - CLI: `python -m telecom_news collect --source <id>` печатает полученные статьи в человекочитаемом виде
@@ -83,6 +84,7 @@
 **Цель:** персистентность статей и предотвращение повторной обработки.
 
 **Входит:**
+- Storage-specific модели/схема в `storage/` (доменная модель `Article` уже определена в M0 в `src/telecom_news/models.py`)
 - SQLite (`storage/database.py`, stdlib `sqlite3`): схема, создание таблиц при старте, путь из конфигурации (`data/news.db`)
 - Сохранение статей; стабильные идентификаторы (`content_hash`, нормализованный URL)
 - Статусы обработки: `new → processed → published` (+ `skipped`, `error`)

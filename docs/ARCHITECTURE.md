@@ -50,7 +50,9 @@
 - **Ответственность:** нормализация URL (trim, removal tracking-параметров), текста (whitespace, длина), языка (ru/en по метке источника или эвристика), вычисление стабильного `content_hash`.
 - **НЕ делает:** не обращается к сети и БД; не определяет релевантность.
 
-### 3.4 Внутренняя модель Article (`storage/models.py`)
+### 3.4 Доменная модель Article (`src/telecom_news/models.py`)
+
+Модель `Article` — доменная модель приложения (M0). Она **не зависит от persistence/storage слоя**: в M0 это dataclass без БД. Storage-specific модели и схема появятся отдельно в M2 (`storage/database.py`).
 
 Поля (минимальный набор MVP):
 
@@ -74,7 +76,7 @@
 
 - **Назначение:** персистентность статей и состояния обработки. MVP: **SQLite** (D-003), stdlib `sqlite3`; абстракция драйвера позволяет позже переключиться на PostgreSQL (non-goal для MVP).
 - **Вход/Выход:** CRUD по `Article`: `upsert_by_hash`, `get_unprocessed`, `set_status`, `mark_published`.
-- **Зависимости:** `storage/models.py`; путь к БД из конфигурации (`data/news.db`).
+- **Зависимости:** доменная модель `Article` (`src/telecom_news/models.py`); путь к БД из конфигурации (`data/news.db`).
 - **Ответственность:** схема БД (создание таблиц при старте); идемпотентное сохранение; атомарные переходы статусов.
 - **НЕ делает:** не дедуплицирует «на глаз», не вызывает LLM, не публикует.
 
@@ -163,6 +165,7 @@ src/telecom_news/
 ├── main.py            # CLI: run / collect / process / publish / status
 ├── config.py          # конфигурация: источники, LM Studio, Telegram (env), пути
 ├── logging_setup.py   # настройка логирования
+├── models.py          # доменная модель Article (M0; без зависимости от storage)
 ├── collectors/
 │   ├── __init__.py
 │   ├── base.py        # RawItem + базовый коллектор (retry, таймауты)
@@ -179,8 +182,7 @@ src/telecom_news/
 │   └── client.py      # LM Studio HTTP client, retry, LLMUnavailableError
 ├── storage/
 │   ├── __init__.py
-│   ├── models.py      # Article + статусы
-│   └── database.py    # SQLite (stdlib sqlite3), схема, CRUD
+│   └── database.py    # SQLite (stdlib sqlite3), схема, CRUD; storage-specific модели (M2)
 ├── delivery/
 │   ├── __init__.py
 │   └── telegram.py    # Telegram Bot API, dry-run, защита от повторной публикации
