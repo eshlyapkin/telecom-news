@@ -47,3 +47,11 @@ data/cache/
 # Logs
 *.log
 logs/
+
+# Local tooling and generated files
+.opencode/
+get-pip.py
+node_modules/
+package.json
+package-lock.json
+docs/telegram_bot_details.txt
