@@ -21,3 +21,11 @@ def test_source_health_records_success_and_preserves_last_success(tmp_path: Path
     assert current["last_success_at"] == first["last_success_at"]
     assert current["last_error"] == "timeout"
     assert current["last_item_count"] == 0
+
+
+def test_health_probe_preserves_collection_item_count(tmp_path: Path) -> None:
+    db = Database(tmp_path / "news.db")
+    db.record_source_health("source-a", success=True, item_count=10)
+    db.record_source_health("source-a", success=True, item_count=None)
+    current = db.source_health()[0]
+    assert current["last_item_count"] == 10

@@ -43,7 +43,9 @@ source is not selected or verified yet.
 - `doctor` is implemented and has mock coverage; live verification in the user's WSL is pending.
 - SQLite backup/restore is implemented with integrity verification and `600` permissions.
 - Error recovery is implemented via `recover`; `run` retries error articles automatically.
-- Telegram request pacing is implemented via `TELEGRAM_MIN_INTERVAL` (default `0.1`). Repeated-error notifications are not implemented yet.
+- Telegram request pacing is implemented via `TELEGRAM_MIN_INTERVAL` (default `0.1`).
+- `doctor` health probes preserve the item count from the last real collection.
+- Repeated-error notifications are not implemented yet.
 
 ## Next work
 

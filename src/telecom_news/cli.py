@@ -481,7 +481,7 @@ def _cmd_doctor(db_path: Path | None = None) -> int:
                 items = RssCollector(
                     source_id=source.id, feed_url=source.url, language=source.language
                 ).collect(limit=1)
-                db.record_source_health(source.id, success=True, item_count=len(items))
+                db.record_source_health(source.id, success=True, item_count=None)
                 checks.append((f"source:{source.id}", True, f"{len(items)} item(s)"))
             except CollectorError as exc:
                 db.record_source_health(source.id, success=False, error=str(exc))

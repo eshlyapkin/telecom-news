@@ -213,11 +213,21 @@ class Database:
             return cursor.rowcount == 1
 
     def record_source_health(
-        self, source_id: str, *, success: bool, item_count: int = 0, error: str | None = None
+        self, source_id: str, *, success: bool, item_count: int | None = 0, error: str | None = None
     ) -> None:
-        """Record the latest collection result for one source."""
+        """Record a collection result; ``None`` preserves the item count."""
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
+            if item_count is None:
+                cursor = conn.execute(
+                    "UPDATE source_health SET last_checked_at = ?, "
+                    "last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END, "
+                    "last_error = ? WHERE source_id = ?",
+                    (now, success, now if success else None, error, source_id),
+                )
+                if cursor.rowcount:
+                    return
+                item_count = 0
             conn.execute(
                 "INSERT INTO source_health "
                 "(source_id, last_checked_at, last_success_at, last_error, last_item_count) "
