@@ -134,7 +134,7 @@ Recovery и backup SQLite:
 Backup и restore SQLite:
 
 ```bash
-.venv/bin/python -m telecom_news backup
+.venv/bin/python -m telecom_news backup --keep-days 14
 .venv/bin/python -m telecom_news restore --input data/backups/news.db
 ```
 

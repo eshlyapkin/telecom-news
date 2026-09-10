@@ -63,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
     backup_parser.add_argument(
         "--output", type=Path, help="Backup path (default: data/backups/news-<UTC>.db)"
     )
+    backup_parser.add_argument(
+        "--keep-days",
+        type=int,
+        default=14,
+        help="Delete automatic backups older than this many days",
+    )
 
     restore_parser = subparsers.add_parser(
         "restore", help="Restore SQLite from a verified backup (M7)"
@@ -387,24 +393,42 @@ def _cmd_recover(limit: int | None = None) -> int:
     return 0
 
 
-def _cmd_backup(output: Path | None = None) -> int:
-    """Create and verify a consistent SQLite backup."""
+def _prune_backups(directory: Path, keep_days: int) -> int:
+    """Delete timestamped automatic backups older than ``keep_days``."""
+    import time
+
+    if keep_days < 0:
+        raise ValueError("--keep-days must be >= 0")
+    cutoff = time.time() - keep_days * 86400
+    removed = 0
+    for path in directory.glob("news-*.db"):
+        if path.is_file() and path.stat().st_mtime < cutoff:
+            path.unlink()
+            removed += 1
+    return removed
+
+
+def _cmd_backup(output: Path | None = None, keep_days: int = 14) -> int:
+    """Create, verify and prune consistent SQLite backups."""
     from datetime import datetime, timezone
 
     from .config import load_config
     from .storage.database import Database
 
+    if keep_days < 0:
+        print("error: --keep-days must be >= 0", file=sys.stderr)
+        return 2
     config = load_config()
-    destination = output or (
-        config.data_dir / "backups" / f"news-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.db"
-    )
+    backup_dir = output.parent if output else config.data_dir / "backups"
+    destination = output or (backup_dir / f"news-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.db")
     db = Database(config.db_path)
     db.backup_to(destination)
     integrity = Database(destination).integrity_check()
     if integrity != "ok":
         print(f"error: backup integrity check failed: {integrity}", file=sys.stderr)
         return 1
-    print(f"Backup created: {destination} (integrity: {integrity})")
+    removed = _prune_backups(backup_dir, keep_days)
+    print(f"Backup created: {destination} (integrity: {integrity}; pruned: {removed})")
     return 0
 
 
@@ -517,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "recover":
         return _cmd_recover(args.limit)
     if args.command == "backup":
-        return _cmd_backup(args.output)
+        return _cmd_backup(args.output, args.keep_days)
     if args.command == "restore":
         return _cmd_restore(args.input)
     if args.command == "collect":

@@ -33,6 +33,18 @@ returns `0` only when all checks pass and `1` when at least one check fails.
 - Backups must be created outside the live SQLite write path and tested by
   restoring into a temporary database.
 
+## Backup commands
+
+```bash
+.venv/bin/python -m telecom_news backup --keep-days 14
+.venv/bin/python -m telecom_news backup --output data/backups/manual.db --keep-days 14
+.venv/bin/python -m telecom_news restore --input data/backups/manual.db
+```
+
+Automatic backups older than `--keep-days` are removed; `manual.db` is not
+removed by retention. Backups are written with permissions `600` and verified
+with `PRAGMA integrity_check`.
+
 ## Verification commands after implementation
 
 ```bash

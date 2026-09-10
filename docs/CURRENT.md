@@ -41,7 +41,7 @@ source is not selected or verified yet.
 - `cron` in WSL is active and has produced successful 15-minute pipeline cycles.
 - A temporary DNS failure caused `exit_code=1` twice; retry/recovery worked and no article data was lost.
 - `doctor` is implemented and has mock coverage; live verification in the user's WSL is pending.
-- SQLite backup/restore is implemented with integrity verification and `600` permissions.
+- SQLite backup/restore is implemented with integrity verification and `600` permissions; automatic backups support retention via `--keep-days`.
 - Error recovery is implemented via `recover`; `run` retries error articles automatically.
 - Telegram request pacing is implemented via `TELEGRAM_MIN_INTERVAL` (default `0.1`).
 - `doctor` health probes preserve the item count from the last real collection.
