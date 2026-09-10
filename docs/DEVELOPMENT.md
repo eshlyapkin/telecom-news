@@ -68,6 +68,19 @@ git config core.hooksPath .githooks
 */15 * * * * bash -lc 'source ~/.config/telecom-news/env && /home/joe/Projects/telecom-news/scripts/run_pipeline.sh'
 ```
 
+## Источники новостей
+
+Сейчас включены четыре официальных RSS-источника:
+
+- `sinch-blog` — `https://sinch.com/blog/feed/`;
+- `twilio-blog` — `https://www.twilio.com/en-us/blog.feed.xml`;
+- `infobip-blog` — `https://www.infobip.com/blog/feed`;
+- `gsma-newsroom` — `https://www.gsma.com/newsroom/feed/`.
+
+`run` без `--source` проверяет все enabled-источники. Ошибка одного источника
+не останавливает остальные; результат сохраняется в `source_health` и виден в
+`status`. Дедупликация общая для всех источников.
+
 ## Telegram (для команды publish)
 
 - Настройки: `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`.

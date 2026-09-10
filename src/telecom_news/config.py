@@ -94,6 +94,28 @@ SOURCES: dict[str, SourceConfig] = {
         language="en",
         enabled=True,
     ),
+    # Official feeds verified during M6 source discovery.
+    "twilio-blog": SourceConfig(
+        id="twilio-blog",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.twilio.com/en-us/blog.feed.xml",
+        language="en",
+        enabled=True,
+    ),
+    "infobip-blog": SourceConfig(
+        id="infobip-blog",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.infobip.com/blog/feed",
+        language="en",
+        enabled=True,
+    ),
+    "gsma-newsroom": SourceConfig(
+        id="gsma-newsroom",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.gsma.com/newsroom/feed/",
+        language="en",
+        enabled=True,
+    ),
 }
 
 

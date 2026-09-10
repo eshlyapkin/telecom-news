@@ -32,3 +32,6 @@ def setup_logging(level: str = "INFO") -> None:
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root.addHandler(handler)
     root.setLevel(numeric_level)
+    # httpx logs full request URLs at INFO; Telegram URLs contain the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

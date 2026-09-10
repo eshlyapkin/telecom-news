@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status);
 CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source_id);
+
+CREATE TABLE IF NOT EXISTS source_health (
+    source_id TEXT PRIMARY KEY,
+    last_checked_at TEXT NOT NULL,
+    last_success_at TEXT,
+    last_error TEXT,
+    last_item_count INTEGER NOT NULL DEFAULT 0
+);
 """
 
 _INSERT_SQL = """
@@ -202,6 +210,33 @@ class Database:
                 (_dt_to_text(published_at), article_id),
             )
             return cursor.rowcount == 1
+
+    def record_source_health(
+        self, source_id: str, *, success: bool, item_count: int = 0, error: str | None = None
+    ) -> None:
+        """Record the latest collection result for one source."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO source_health "
+                "(source_id, last_checked_at, last_success_at, last_error, last_item_count) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_id) DO UPDATE SET "
+                "last_checked_at = excluded.last_checked_at, "
+                "last_success_at = COALESCE(excluded.last_success_at, "
+                "source_health.last_success_at), "
+                "last_error = excluded.last_error, last_item_count = excluded.last_item_count",
+                (source_id, now, now if success else None, error, item_count),
+            )
+
+    def source_health(self) -> list[dict[str, Any]]:
+        """Return source health records ordered by source id."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT source_id, last_checked_at, last_success_at, last_error, "
+                "last_item_count FROM source_health ORDER BY source_id"
+            )
+            return [dict(row) for row in rows]
 
     def count_by_status(self) -> dict[str, int]:
         """Article counters per status (all known statuses always present)."""

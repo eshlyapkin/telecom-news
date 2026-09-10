@@ -42,7 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run collect, process and publish once (M5)")
-    run_parser.add_argument("--source", help="Source id to collect from (default: sinch-blog)")
+    run_parser.add_argument(
+        "--source", help="Only this source; omit to collect all enabled sources"
+    )
     run_parser.add_argument(
         "--dry-run", action="store_true", help="Preview Telegram posts without sending them"
     )
@@ -118,12 +120,14 @@ def _cmd_collect(source_id: str, limit: int | None, db_path: Path | None = None)
         )
         return 2
     collector = RssCollector(source_id=source.id, feed_url=source.url, language=source.language)
+    db = Database(db_path or load_config().db_path)
     try:
         raw_items = collector.collect(limit=limit)
     except CollectorError as exc:
+        db.record_source_health(source.id, success=False, error=str(exc))
         print(f"error: collect failed for source '{source_id}': {exc}", file=sys.stderr)
         return 1
-    db = Database(db_path or load_config().db_path)
+    db.record_source_health(source.id, success=True, item_count=len(raw_items))
     stored_new = 0
     print(f"Collected {len(raw_items)} article(s) from '{source.id}' ({source.url}):")
     for position, raw in enumerate(raw_items, start=1):
@@ -158,6 +162,15 @@ def _cmd_status(db_path: Path | None = None) -> int:
         if status not in STATUSES:
             print(f"  {status}: {counts[status]} (unexpected)")
     print(f"  total: {sum(counts.values())}")
+    health = Database(path).source_health()
+    if health:
+        print("Source health:")
+        for item in health:
+            state = "ok" if item["last_error"] is None else f"error: {item['last_error']}"
+            print(
+                f"  {item['source_id']}: {state}; checked {item['last_checked_at']}; "
+                f"items {item['last_item_count']}"
+            )
     return 0
 
 
@@ -317,15 +330,21 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
     return 1 if errors else 0
 
 
-def _cmd_run(source_id: str, limit: int | None, dry_run: bool) -> int:
-    """Run one pipeline cycle: collect, process, then publish."""
-    collect_code = _cmd_collect(source_id, limit)
-    if collect_code != 0:
-        return collect_code
+def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
+    """Run one pipeline cycle across enabled sources, then process and publish."""
+    from .config import SOURCES
+
+    source_ids = (
+        [source_id] if source_id else [item.id for item in SOURCES.values() if item.enabled]
+    )
+    collection_failed = False
+    for current_source in source_ids:
+        if _cmd_collect(current_source, limit) != 0:
+            collection_failed = True
 
     process_code = _cmd_process(limit)
     publish_code = _cmd_publish(limit, dry_run)
-    return 1 if process_code != 0 or publish_code != 0 else 0
+    return 1 if collection_failed or process_code != 0 or publish_code != 0 else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -343,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "run":
-        return _cmd_run(args.source or "sinch-blog", args.limit, args.dry_run)
+        return _cmd_run(args.source, args.limit, args.dry_run)
     if args.command == "status":
         return _cmd_status()
     if args.command == "collect":

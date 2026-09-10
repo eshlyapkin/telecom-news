@@ -27,7 +27,8 @@
 
 - **Назначение:** декларация реальных источников (RSS/API), из которых собираются новости SMS/messaging-экосистемы.
 - **Вход:** конфигурация источника (URL, имя, язык, приоритет).
-- **Выход:** список активных источников для collectors.
+- **Выход:** список активных источников для collectors. В M6 включены четыре
+  официальных RSS-источника: Sinch Blog, Twilio Blog, Infobip Blog и GSMA Newsroom.
 - **Зависимости:** `config.py`.
 - **Ответственность:** хранить параметры источника; включать/отключать источник; метки source health (M6/M7).
 - **НЕ делает:** не скачивает и не парсит контент; не знает о pipeline.
@@ -75,7 +76,7 @@
 ### 3.5 Storage (`storage/database.py`)
 
 - **Назначение:** персистентность статей и состояния обработки. MVP: **SQLite** (D-003), stdlib `sqlite3`; абстракция драйвера позволяет позже переключиться на PostgreSQL (non-goal для MVP).
-- **Вход/Выход:** CRUD по `Article`: `upsert_by_hash`, `get_unprocessed`, `set_status`, `mark_published`.
+- **Вход/Выход:** CRUD по `Article`: `upsert_by_hash`, `get_unprocessed`, `set_status`, `mark_published`; health по источникам через `record_source_health`/`source_health`.
 - **Зависимости:** доменная модель `Article` (`src/telecom_news/models.py`); путь к БД из конфигурации (`data/news.db`).
 - **Ответственность:** схема БД (создание таблиц при старте); идемпотентное сохранение; атомарные переходы статусов.
 - **НЕ делает:** не дедуплицирует «на глаз», не вызывает LLM, не публикует.
@@ -128,7 +129,7 @@
 
 - **Назначение:** единственный интерфейс MVP (D-004).
 - **Команды (MVP):**
-  - `run` — полный pipeline: collect → normalize → store/dedup → LLM → publish; флаги `--source <id>`, `--dry-run` (без отправки в Telegram), `--limit N`.
+  - `run` — полный pipeline по всем enabled-источникам: collect → normalize → store/dedup → LLM → publish; флаги `--source <id>` (опционально ограничить одним источником), `--dry-run` (без отправки в Telegram), `--limit N`.
   - `collect` / `process` / `publish` — отдельные этапы для отладки.
   - `status` — счётчики по статусам статей, health источников.
 - **Вход:** аргументы командной строки (argparse/stdlib).
