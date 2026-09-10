@@ -6,31 +6,31 @@
 Система ежедневного мониторинга и публикации новостей **прежде всего об SMS-индустрии** (A2P/P2A/P2P, SMS-вендоры/агрегаторы/carriers, hubs, маршрутизация/delivery/security/anti-fraud по SMS, партнёрства, регуляторика). Общие телеком-новости без связи с SMS/messaging отфильтровываются. Источники — ru и en. Pipeline: источники → сбор → нормализация → storage/dedup → LLM (LM Studio) → публикация в Telegram. Интерфейс MVP — CLI.
 
 ## Текущая стадия
-Implementation — **M3 завершён** (код, mock-тесты и E2E через фейковый OpenAI-сервер проверены; прогон с живой моделью — NOT VERIFIED, нужен LM Studio на машине пользователя). pytest 98 passed, ruff чист.
+Implementation — **M4 завершён по mock-тестам**: Telegram Bot API, HTML-форматирование, retry, dry-run и идемпотентный статус published. Живая отправка в канал не проверена: нужны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID. Локально проверено: pytest 109 passed, ruff check/format чисты.
 
 ## Текущий milestone
-M4 — Telegram Publishing. **Не начат.** Старт только после явного подтверждения пользователя.
+M4 — Telegram Publishing. **Реализация завершена; живая отправка ожидает chat_id.**
 
 ## Завершён ли предыдущий milestone
 Да: M0–M3 завершены. Оговорка по M3: критерий «реальный прогон `process` с запущенным LM Studio» не мог быть проверен в песочнице (нет LM Studio) — NOT VERIFIED; вместо этого проверена вся обвязка (см. критерии ниже). Проверка на живой модели: `collect --source sinch-blog --limit 3`, затем `process`, затем `status` (ожидается: релевантные → `processed` с категорией и русским саммари, общие телеком → `skipped`).
 
 ## Следующий конкретный шаг
-Начать M4 по составу из docs/ROADMAP.md (только после подтверждения пользователя): `delivery/telegram.py` (Bot API `sendMessage`, токен/chat_id из env), формат публикации, `publish --dry-run`, тестовая отправка в тестовый канал, `tests/test_telegram.py` (mock Bot API). Нужны токен бота и chat_id тестового канала. M4 НЕ начат.
+Получить `TELEGRAM_CHAT_ID` тестового канала и выполнить одну живую отправку с `publish --limit 1`, затем повторный запуск для проверки отсутствия дублей. Scheduler и полный `run` остаются scope M5.
 
 ## Ключевые решения, влияющие на следующий шаг
 - **accepted:** D-001…D-004, D-007 (`sinch-blog`), D-008 Telegram delivery (реализация — M4).
 - M3 зафиксировал: `LLMUnavailableError` (transport/5xx/нет моделей → прогон останавливается, exit 1, статьи остаются `new`) vs `LLMResponseError` (битый ответ → статья `error`, прогон продолжается); `process`: 0 завершён / 2 usage / 1 LLM недоступна; `target_lang` по умолчанию `ru` (ARCHITECTURE 3.9); пустой `LMSTUDIO_MODEL` = первая загруженная модель.
 
 ## Фактически существующая реализация
-M0–M3 + dev-инфраструктура (незакоммиченные изменения в working tree — коммит только по запросу пользователя):
+M0–M4 + dev-инфраструктура (текущие изменения в working tree; коммит только по запросу пользователя):
 - `pyproject.toml` (Python 3.10+, src-layout; runtime: httpx, feedparser; dev: pytest, ruff)
 - `src/telecom_news/`: M1/M2-модули + `llm/` (`client.py`: `LLMClient`, `LLMUnavailableError`, `LLMResponseError`, `parse_json_response`), `processors/relevance.py` (`check_relevance`, `CATEGORIES`, `prepare_article_text`), `processors/summarize.py` (`summarize`); `cli.py` (+ команда `process --limit`); `config.py` (+ `lmstudio_base_url`/`lmstudio_model`/`target_lang`, env `LMSTUDIO_*`, `TELECOM_NEWS_TARGET_LANG`); `storage/database.py` (+ `save_processing_result`)
 - Известные шероховатости (кандидаты на чистку): `main.py` — мёртвый дубликат CLI; `logging_setup.py` — параллельная реализация logging (CLI использует `logging_config`)
-- `tests/`: 98 тестов (M0–M2 + `test_llm_client.py` (MockTransport), `test_relevance.py` (fake LLM), `test_cli_process.py` (tmp-БД), + тесты `save_processing_result` и LM-конфига; без реальной сети/БД/LLM)
+- `tests/`: 109 тестов (M0–M4; MockTransport/tmp-БД/fake LLM, без реальной сети и продовой БД)
 - Dev-инфраструктура: ruff, `.githooks/`, `docs/DEVELOPMENT.md` (+ раздел LM Studio), `scripts/setup.sh`
 - `.venv/` (project-local). Локальная `data/news.db` (5 статей `new`, gitignored).
 
-**Не реализовано (scope M4+):** Telegram, scheduler, scraping, FastAPI.
+**Не реализовано (scope M5+):** scheduler, scraping, FastAPI. Живая Telegram-отправка ещё не проверена.
 
 ## Blockers
 Нет. Для M4 нужны токен бота и chat_id тестового канала; для перепроверки M3 на живой модели — запущенный LM Studio.

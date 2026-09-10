@@ -55,7 +55,7 @@
 
 ## Структура проекта
 
-Текущее состояние — **M3 LLM Processing завершён**: M2 + клиент LM Studio, релевантность/категория/саммари, команда `process`. Прогон с живой моделью в песочнице не верифицирован (нужен LM Studio на вашей машине). Следующая — M4 Telegram Publishing по docs/ROADMAP.md.
+Текущее состояние — **M4 Telegram Publishing реализован**: M1–M3 плюс Telegram Bot API, HTML-форматирование, `publish --dry-run`, retry и атомарный статус `published`. Живая отправка в канал требует `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`; без них проверяется через dry-run и моки.
 
 ```
 telecom-news/
@@ -69,7 +69,8 @@ telecom-news/
 │   └── telecom_news/
 │       ├── __init__.py         # Версия пакета
 │       ├── __main__.py         # python -m telecom_news
-│       ├── cli.py              # CLI: collect, status, process; run — заглушка до M4
+│       ├── cli.py              # CLI: collect, status, process, publish; run — заглушка до M5
+│       ├── delivery/            # Telegram Bot API delivery
 │       ├── config.py           # Конфигурация: пути, БД, LM Studio, log level, источники + env
 │       ├── logging_config.py   # Настройка stdlib logging
 │       ├── models.py           # Доменная модель Article
@@ -77,7 +78,7 @@ telecom-news/
 │       ├── llm/                # client.py (LM Studio HTTP-клиент)
 │       ├── processors/         # normalize.py, dedup.py, relevance.py, summarize.py
 │       └── storage/            # database.py (SQLite, CRUD, статусы)
-├── tests/                      # pytest, 98 тестов (MockTransport/tmp_path/fake LLM, без реальной сети/БД)
+├── tests/                      # pytest, unit/integration mocks (без реальной сети/продовой БД)
 ├── data/                       # Локальные данные (не в git): news.db
 │   └── .gitkeep
 └── docs/                       # Документация (ARCHITECTURE.md, ROADMAP.md, DEVELOPMENT.md и др.)
@@ -97,10 +98,11 @@ python3 -m venv .venv          # или: uv venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"         # dev-зависимости: pytest, ruff
 
-# Проверка CLI (M3: collect/status/process работают; run — заглушка до M4)
+# Проверка CLI (M4: collect/status/process/publish работают; run — заглушка до M5)
 python -m telecom_news --help
 python -m telecom_news collect --source sinch-blog --limit 3
 python -m telecom_news process --limit 3   # нужен запущенный LM Studio
+python -m telecom_news publish --dry-run
 python -m telecom_news status
 
 # Тесты

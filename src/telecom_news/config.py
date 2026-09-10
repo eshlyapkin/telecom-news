@@ -3,8 +3,8 @@
 Defaults + environment overrides, no side effects. Only what is actually
 needed so far: project root, data directory, SQLite path, log level, source
 registry, LM Studio endpoint/model and the publication target language.
-Deliberately NOT included yet: Telegram token/chat_id (M4). No real network
-calls are made here.
+Telegram token/chat_id are read from environment for M4; no network calls
+are made by configuration loading.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ class Config:
     lmstudio_base_url: str = "http://localhost:1234/v1"
     lmstudio_model: str = ""  # empty = first model loaded in LM Studio
     target_lang: str = "ru"  # publication language (ARCHITECTURE.md 3.9)
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -54,6 +56,8 @@ class Config:
         target_lang = os.environ.get("TELECOM_NEWS_TARGET_LANG")
         if target_lang:
             object.__setattr__(self, "target_lang", target_lang.lower())
+        object.__setattr__(self, "telegram_bot_token", os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+        object.__setattr__(self, "telegram_chat_id", os.environ.get("TELEGRAM_CHAT_ID", ""))
 
     @property
     def logs_dir(self) -> Path:

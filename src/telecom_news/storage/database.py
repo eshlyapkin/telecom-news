@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -187,6 +187,21 @@ class Database:
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"no article with id {article_id}")
+
+    def mark_published(self, article_id: int, *, published_at: datetime | None = None) -> bool:
+        """Atomically mark a processed article as published.
+
+        Returns false when the row is missing or no longer has ``processed``
+        status, preventing a concurrent/repeated publish from duplicating it.
+        """
+        published_at = published_at or datetime.now(timezone.utc)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE articles SET status = 'published', published_at_telegram = ? "
+                "WHERE id = ? AND status = 'processed'",
+                (_dt_to_text(published_at), article_id),
+            )
+            return cursor.rowcount == 1
 
     def count_by_status(self) -> dict[str, int]:
         """Article counters per status (all known statuses always present)."""

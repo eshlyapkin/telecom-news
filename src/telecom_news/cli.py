@@ -71,6 +71,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="Maximum number of articles to process"
     )
 
+    publish_parser = subparsers.add_parser(
+        "publish", help="Publish processed articles to Telegram (M4)"
+    )
+    publish_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview publication text without network or status changes",
+    )
+    publish_parser.add_argument(
+        "--limit", type=int, default=None, help="Maximum number of articles to publish"
+    )
+
     return parser
 
 
@@ -250,6 +262,65 @@ def _cmd_process(
     return 0
 
 
+def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) -> int:
+    """Publish processed articles, or preview them without credentials/network."""
+    from .config import load_config
+    from .delivery.telegram import TelegramClient, TelegramError, format_post
+    from .storage.database import Database
+
+    if limit is not None and limit < 1:
+        print(f"error: --limit must be >= 1 (got {limit}).", file=sys.stderr)
+        return 2
+    config = load_config()
+    db = Database(db_path or config.db_path)
+    articles = db.get_unprocessed(status="processed", limit=limit)
+    if not articles:
+        print("Nothing to publish (no articles with status 'processed').")
+        return 0
+    if not dry_run and (not config.telegram_bot_token or not config.telegram_chat_id):
+        print(
+            "error: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required (or use --dry-run).",
+            file=sys.stderr,
+        )
+        return 2
+    client = None if dry_run else TelegramClient(config.telegram_bot_token)
+    errors = 0
+    published = 0
+    for article in articles:
+        try:
+            text = format_post(article)
+        except TelegramError as exc:
+            errors += 1
+            db.set_status(article.id or 0, "error")
+            print(f"error: article id={article.id}: {exc}; marked 'error'.", file=sys.stderr)
+            continue
+        if dry_run:
+            print(f"--- article id={article.id} ---")
+            print(text)
+            continue
+        try:
+            assert client is not None
+            client.send_message(config.telegram_chat_id, text)
+            assert article.id is not None
+            if db.mark_published(article.id):
+                published += 1
+                print(f"[{article.id}] published: {article.title or '(no title)'}")
+            else:
+                print(f"warning: article id={article.id} was no longer processed", file=sys.stderr)
+        except TelegramError as exc:
+            errors += 1
+            print(f"error: article id={article.id}: {exc}", file=sys.stderr)
+        except (AssertionError, KeyError, TypeError, ValueError) as exc:
+            errors += 1
+            db.set_status(article.id or 0, "error")
+            print(f"error: article id={article.id}: {exc}; marked 'error'.", file=sys.stderr)
+    if dry_run:
+        print(f"Dry run: {len(articles)} article(s) previewed.")
+        return 0
+    print(f"Done: {published} published, {errors} error(s).")
+    return 1 if errors else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
     from .config import load_config
@@ -274,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_collect(args.source, args.limit)
     if args.command == "process":
         return _cmd_process(args.limit)
+    if args.command == "publish":
+        return _cmd_publish(args.limit, args.dry_run)
 
     parser.print_help()
     return 0
