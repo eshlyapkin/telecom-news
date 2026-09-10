@@ -54,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Show article counters by status")
     subparsers.add_parser("doctor", help="Check database and external dependencies (M7)")
 
+    backup_parser = subparsers.add_parser("backup", help="Create a consistent SQLite backup (M7)")
+    backup_parser.add_argument(
+        "--output", type=Path, help="Backup path (default: data/backups/news-<UTC>.db)"
+    )
+
+    restore_parser = subparsers.add_parser(
+        "restore", help="Restore SQLite from a verified backup (M7)"
+    )
+    restore_parser.add_argument("--input", required=True, type=Path, help="Backup database path")
+
     collect_parser = subparsers.add_parser(
         "collect", help="Collect one source and store new articles (M1–M2: RSS only)"
     )
@@ -349,6 +359,42 @@ def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
     return 1 if collection_failed or process_code != 0 or publish_code != 0 else 0
 
 
+def _cmd_backup(output: Path | None = None) -> int:
+    """Create and verify a consistent SQLite backup."""
+    from datetime import datetime, timezone
+
+    from .config import load_config
+    from .storage.database import Database
+
+    config = load_config()
+    destination = output or (
+        config.data_dir / "backups" / f"news-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.db"
+    )
+    db = Database(config.db_path)
+    db.backup_to(destination)
+    integrity = Database(destination).integrity_check()
+    if integrity != "ok":
+        print(f"error: backup integrity check failed: {integrity}", file=sys.stderr)
+        return 1
+    print(f"Backup created: {destination} (integrity: {integrity})")
+    return 0
+
+
+def _cmd_restore(input_path: Path) -> int:
+    """Restore a verified backup into the configured live database."""
+    from .config import load_config
+    from .storage.database import Database
+
+    destination = load_config().db_path
+    try:
+        Database.restore_from(input_path, destination)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        print(f"error: restore failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Database restored: {destination}")
+    return 0
+
+
 def _cmd_doctor(db_path: Path | None = None) -> int:
     """Check local storage and all configured external dependencies (M7)."""
     import httpx
@@ -440,6 +486,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_status()
     if args.command == "doctor":
         return _cmd_doctor()
+    if args.command == "backup":
+        return _cmd_backup(args.output)
+    if args.command == "restore":
+        return _cmd_restore(args.input)
     if args.command == "collect":
         return _cmd_collect(args.source, args.limit)
     if args.command == "process":

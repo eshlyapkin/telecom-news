@@ -238,6 +238,43 @@ class Database:
             )
             return [dict(row) for row in rows]
 
+    def integrity_check(self) -> str:
+        """Return SQLite's integrity-check result (normally ``ok``)."""
+        with self._connect() as conn:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+            return str(row[0]) if row else "unknown"
+
+    def backup_to(self, destination: Path | str) -> Path:
+        """Create a consistent SQLite backup using SQLite's backup API."""
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as source, sqlite3.connect(destination) as target:
+            source.backup(target)
+        return destination
+
+    @staticmethod
+    def restore_from(backup: Path | str, destination: Path | str) -> Path:
+        """Restore a verified backup atomically into ``destination``."""
+        backup = Path(backup)
+        destination = Path(destination)
+        if not backup.exists():
+            raise FileNotFoundError(backup)
+        with sqlite3.connect(backup) as source:
+            result = source.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise ValueError(
+                    f"backup failed integrity check: {result[0] if result else 'unknown'}"
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_suffix(destination.suffix + ".restore.tmp")
+            try:
+                with sqlite3.connect(temporary) as target:
+                    source.backup(target)
+                temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return destination
+
     def count_by_status(self) -> dict[str, int]:
         """Article counters per status (all known statuses always present)."""
         with self._connect() as conn:

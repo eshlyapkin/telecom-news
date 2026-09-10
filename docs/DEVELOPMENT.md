@@ -119,6 +119,16 @@ enabled RSS-источники. Она возвращает `0`, если все
 .venv/bin/python -m telecom_news doctor
 ```
 
+Backup и restore SQLite:
+
+```bash
+.venv/bin/python -m telecom_news backup
+.venv/bin/python -m telecom_news restore --input data/backups/news.db
+```
+
+Перед ручным restore остановите scheduler. После восстановления проверьте
+`status`, `doctor` и только затем возобновляйте cron.
+
 Текущий порядок перед M7-разработкой:
 
 1. проверить `git status` и `docs/CURRENT.md`;

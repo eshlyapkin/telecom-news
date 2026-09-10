@@ -119,6 +119,23 @@ def test_count_by_status_zero_on_fresh_db(tmp_path: Path) -> None:
     }
 
 
+def test_backup_and_restore_round_trip(tmp_path: Path) -> None:
+    source = Database(tmp_path / "live.db")
+    source.upsert_by_hash(_article(1))
+    backup = source.backup_to(tmp_path / "backups" / "news.db")
+    assert backup.exists()
+    assert Database(backup).integrity_check() == "ok"
+
+    restored = tmp_path / "restored.db"
+    Database.restore_from(backup, restored)
+    assert Database(restored).get_unprocessed()[0].title == "Title 1"
+
+
+def test_restore_rejects_missing_backup(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        Database.restore_from(tmp_path / "missing.db", tmp_path / "restored.db")
+
+
 def test_data_survives_reopen(tmp_path: Path) -> None:
     path = tmp_path / "test.db"
     Database(path).upsert_by_hash(_article(1))

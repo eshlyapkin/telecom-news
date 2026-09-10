@@ -41,7 +41,7 @@ source is not selected or verified yet.
 - `cron` in WSL is active and has produced successful 15-minute pipeline cycles.
 - A temporary DNS failure caused `exit_code=1` twice; retry/recovery worked and no article data was lost.
 - `doctor` is implemented and has mock coverage; live verification in the user's WSL is pending.
-- SQLite backup/recovery, rate limits and repeated-error notifications are not implemented yet.
+- SQLite backup/restore is implemented with integrity verification; rate limits and repeated-error notifications are not implemented yet.
 
 ## Next work
 
