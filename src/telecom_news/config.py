@@ -32,6 +32,7 @@ class Config:
     target_lang: str = "ru"  # publication language (ARCHITECTURE.md 3.9)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_min_interval: float = 0.1
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -58,6 +59,12 @@ class Config:
             object.__setattr__(self, "target_lang", target_lang.lower())
         object.__setattr__(self, "telegram_bot_token", os.environ.get("TELEGRAM_BOT_TOKEN", ""))
         object.__setattr__(self, "telegram_chat_id", os.environ.get("TELEGRAM_CHAT_ID", ""))
+        interval = os.environ.get("TELEGRAM_MIN_INTERVAL")
+        if interval:
+            try:
+                object.__setattr__(self, "telegram_min_interval", max(0.0, float(interval)))
+            except ValueError:
+                pass
 
     @property
     def logs_dir(self) -> Path:

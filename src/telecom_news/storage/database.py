@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -250,6 +251,7 @@ class Database:
         destination.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as source, sqlite3.connect(destination) as target:
             source.backup(target)
+        os.chmod(destination, 0o600)
         return destination
 
     @staticmethod
@@ -270,10 +272,30 @@ class Database:
             try:
                 with sqlite3.connect(temporary) as target:
                     source.backup(target)
+                os.chmod(temporary, 0o600)
                 temporary.replace(destination)
+                os.chmod(destination, 0o600)
             finally:
                 temporary.unlink(missing_ok=True)
         return destination
+
+    def reset_errors(self, limit: int | None = None) -> int:
+        """Return error articles to ``new`` for a controlled retry."""
+        with self._connect() as conn:
+            if limit is None:
+                cursor = conn.execute("UPDATE articles SET status = 'new' WHERE status = 'error'")
+            else:
+                rows = conn.execute(
+                    "SELECT id FROM articles WHERE status = 'error' ORDER BY id LIMIT ?", (limit,)
+                ).fetchall()
+                ids = [row["id"] for row in rows]
+                if not ids:
+                    return 0
+                placeholders = ",".join("?" for _ in ids)
+                cursor = conn.execute(
+                    f"UPDATE articles SET status = 'new' WHERE id IN ({placeholders})", ids
+                )
+            return cursor.rowcount
 
     def count_by_status(self) -> dict[str, int]:
         """Article counters per status (all known statuses always present)."""

@@ -49,7 +49,7 @@ def test_publish_marks_article_after_success(tmp_path: Path, monkeypatch, capsys
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
 
     class FakeClient:
-        def __init__(self, token: str) -> None:
+        def __init__(self, token: str, **kwargs) -> None:
             assert token == "token"
 
         def send_message(self, chat_id: str, text: str) -> dict:
@@ -71,7 +71,7 @@ def test_send_failure_leaves_article_processed(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
 
     class BrokenClient:
-        def __init__(self, token: str) -> None:
+        def __init__(self, token: str, **kwargs) -> None:
             pass
 
         def send_message(self, chat_id: str, text: str) -> dict:

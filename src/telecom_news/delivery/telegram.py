@@ -54,6 +54,7 @@ class TelegramClient:
         *,
         timeout: float = 30.0,
         max_retries: int = 3,
+        min_interval: float = 0.0,
         transport: httpx.BaseTransport | None = None,
         base_url: str = "https://api.telegram.org",
         sleep: Any = time.sleep,
@@ -63,6 +64,8 @@ class TelegramClient:
         self.token = token
         self.timeout = timeout
         self.max_retries = max(0, max_retries)
+        self.min_interval = max(0.0, min_interval)
+        self._last_request_at: float | None = None
         self.base_url = base_url.rstrip("/")
         self._transport = transport
         self._sleep = sleep
@@ -81,6 +84,7 @@ class TelegramClient:
         }
         with httpx.Client(timeout=self.timeout, transport=self._transport) as client:
             for attempt in range(self.max_retries + 1):
+                self._wait_for_slot()
                 try:
                     response = client.post(self.endpoint, json=payload)
                 except httpx.HTTPError as exc:
@@ -111,6 +115,14 @@ class TelegramClient:
                     raise TelegramError(f"Telegram API error: {description}")
                 return data
         raise AssertionError("retry loop returned without a result")
+
+    def _wait_for_slot(self) -> None:
+        now = time.monotonic()
+        if self._last_request_at is not None:
+            remaining = self.min_interval - (now - self._last_request_at)
+            if remaining > 0:
+                self._sleep(remaining)
+        self._last_request_at = time.monotonic()
 
     def _backoff(self, attempt: int) -> float:
         return min(8.0, 0.5 * (2**attempt)) + random.uniform(0, 0.1)

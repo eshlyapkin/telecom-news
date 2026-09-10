@@ -124,6 +124,7 @@ def test_backup_and_restore_round_trip(tmp_path: Path) -> None:
     source.upsert_by_hash(_article(1))
     backup = source.backup_to(tmp_path / "backups" / "news.db")
     assert backup.exists()
+    assert backup.stat().st_mode & 0o777 == 0o600
     assert Database(backup).integrity_check() == "ok"
 
     restored = tmp_path / "restored.db"
@@ -134,6 +135,24 @@ def test_backup_and_restore_round_trip(tmp_path: Path) -> None:
 def test_restore_rejects_missing_backup(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         Database.restore_from(tmp_path / "missing.db", tmp_path / "restored.db")
+
+
+def test_reset_errors_returns_articles_to_new(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1))
+    db.set_status(1, "error")
+    assert db.reset_errors() == 1
+    assert db.count_by_status()["new"] == 1
+
+
+def test_reset_errors_respects_limit(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1))
+    db.upsert_by_hash(_article(2))
+    db.set_status(1, "error")
+    db.set_status(2, "error")
+    assert db.reset_errors(1) == 1
+    assert db.count_by_status()["error"] == 1
 
 
 def test_data_survives_reopen(tmp_path: Path) -> None:

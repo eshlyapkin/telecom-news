@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Show article counters by status")
     subparsers.add_parser("doctor", help="Check database and external dependencies (M7)")
 
+    recover_parser = subparsers.add_parser("recover", help="Queue error articles for retry (M7)")
+    recover_parser.add_argument(
+        "--limit", type=int, help="Maximum number of error articles to reset"
+    )
+
     backup_parser = subparsers.add_parser("backup", help="Create a consistent SQLite backup (M7)")
     backup_parser.add_argument(
         "--output", type=Path, help="Backup path (default: data/backups/news-<UTC>.db)"
@@ -304,7 +309,14 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
             file=sys.stderr,
         )
         return 2
-    client = None if dry_run else TelegramClient(config.telegram_bot_token)
+    client = (
+        None
+        if dry_run
+        else TelegramClient(
+            config.telegram_bot_token,
+            min_interval=config.telegram_min_interval,
+        )
+    )
     errors = 0
     published = 0
     for article in articles:
@@ -349,6 +361,9 @@ def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
     source_ids = (
         [source_id] if source_id else [item.id for item in SOURCES.values() if item.enabled]
     )
+    recovery_code = _cmd_recover()
+    if recovery_code != 0:
+        return recovery_code
     collection_failed = False
     for current_source in source_ids:
         if _cmd_collect(current_source, limit) != 0:
@@ -357,6 +372,19 @@ def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
     process_code = _cmd_process(limit)
     publish_code = _cmd_publish(limit, dry_run)
     return 1 if collection_failed or process_code != 0 or publish_code != 0 else 0
+
+
+def _cmd_recover(limit: int | None = None) -> int:
+    """Move error articles back to new so the next run can retry them."""
+    from .config import load_config
+    from .storage.database import Database
+
+    if limit is not None and limit < 1:
+        print(f"error: --limit must be >= 1 (got {limit}).", file=sys.stderr)
+        return 2
+    count = Database(load_config().db_path).reset_errors(limit)
+    print(f"Recovered {count} error article(s) for retry.")
+    return 0
 
 
 def _cmd_backup(output: Path | None = None) -> int:
@@ -486,6 +514,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_status()
     if args.command == "doctor":
         return _cmd_doctor()
+    if args.command == "recover":
+        return _cmd_recover(args.limit)
     if args.command == "backup":
         return _cmd_backup(args.output)
     if args.command == "restore":

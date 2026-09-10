@@ -106,6 +106,9 @@ Telegram credentials не хранятся в репозитории. Подро
 staged additions. Если секрет попал в лог или чат, его нужно отозвать через
 BotFather до следующей отправки.
 
+`TELEGRAM_MIN_INTERVAL` задаёт минимальную паузу между Telegram API-запросами
+(default `0.1` seconds); значение `0` отключает дополнительное pacing.
+
 ## M7 и диагностика
 
 Команда `doctor` реализована и проверяет БД, Telegram Bot API, LM Studio и все
@@ -118,6 +121,15 @@ enabled RSS-источники. Она возвращает `0`, если все
 ```bash
 .venv/bin/python -m telecom_news doctor
 ```
+
+Recovery и backup SQLite:
+
+```bash
+.venv/bin/python -m telecom_news recover
+```
+
+`run` автоматически возвращает статьи со статусом `error` в очередь `new` перед
+обработкой.
 
 Backup и restore SQLite:
 
