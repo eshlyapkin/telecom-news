@@ -12,6 +12,8 @@ from telecom_news.models import Article
 from telecom_news.processors.relevance import (
     CATEGORIES,
     check_relevance,
+    has_messaging_signal,
+    is_obviously_off_topic,
     prepare_article_text,
 )
 from telecom_news.processors.summarize import summarize
@@ -45,6 +47,34 @@ def test_relevant_with_category() -> None:
     result = check_relevance(fake, _article())
     assert (result.relevant, result.category) == (True, "vendor")
     assert result.reason == "SMS vendor news"
+
+
+def test_obvious_video_article_is_rejected_without_llm_call() -> None:
+    fake = _FakeLLM(['{"relevant": true, "category": "technology"}'])
+    article = _article(
+        title="Build a Video Chat Application with Programmable Video",
+        body="Create a WebRTC video application.",
+    )
+    assert is_obviously_off_topic(article) is True
+    result = check_relevance(fake, article)
+    assert (result.relevant, result.category) == (False, None)
+    assert fake.calls == []
+
+
+def test_generic_vendor_article_without_messaging_signal_is_rejected() -> None:
+    fake = _FakeLLM(['{"relevant": true, "category": "vendor"}'])
+    article = _article(title="The future of enterprise AI", body="AI improves operations.")
+    assert has_messaging_signal(article) is False
+    assert check_relevance(fake, article).relevant is False
+    assert fake.calls == []
+
+
+def test_messaging_article_with_video_reference_is_not_rejected() -> None:
+    article = _article(
+        title="Business messaging and video chat for customer engagement",
+        body="SMS fallback keeps the conversation reachable.",
+    )
+    assert is_obviously_off_topic(article) is False
 
 
 def test_irrelevant_yields_no_category() -> None:

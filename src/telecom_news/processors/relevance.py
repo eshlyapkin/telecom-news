@@ -32,6 +32,56 @@ CATEGORIES = (
 
 MAX_INPUT_CHARS = 4000
 
+# Cheap deterministic guard for broad vendor feeds. It prevents obvious
+# voice/video/developer material from reaching the LLM and being misclassified
+# as messaging merely because the publisher is a communications company.
+MESSAGING_TERMS = (
+    "sms",
+    "a2p",
+    "p2a",
+    "p2p",
+    "mms",
+    "rcs",
+    "whatsapp",
+    "messaging",
+    "text message",
+    "texting",
+    "otp",
+    "one-time password",
+    "verification code",
+    "smishing",
+    "short message",
+    "business message",
+)
+OBVIOUSLY_OFF_TOPIC_TERMS = (
+    "video chat",
+    "programmable video",
+    "web rtc",
+    "webrtc",
+    "video application",
+    "video app",
+    "voice network",
+    "voice call",
+    "sip trunk",
+    "email marketing",
+    "email sending",
+)
+
+
+def has_messaging_signal(article: Article) -> bool:
+    """Return true when the text explicitly signals the target ecosystem."""
+    text = f"{article.title} {article.body}".casefold()
+    return any(term in text for term in MESSAGING_TERMS)
+
+
+def is_obviously_off_topic(article: Article) -> bool:
+    """Return true for clear non-SMS content from broad communication feeds."""
+    text = f"{article.title} {article.body}".casefold()
+    return any(term in text for term in OBVIOUSLY_OFF_TOPIC_TERMS) and not has_messaging_signal(
+        article
+    )
+
+
 RELEVANCE_SYSTEM_PROMPT = (
     "You are a news relevance classifier for an SMS-industry monitoring system. "
     "Decide whether the article is about the SMS/messaging ecosystem: A2P/P2A/P2P "
@@ -85,7 +135,19 @@ def _coerce_bool(value: object) -> bool:
 
 
 def check_relevance(client: LLMClient, article: Article) -> RelevanceResult:
-    """Ask the LLM whether the article belongs to the SMS/messaging ecosystem."""
+    """Classify whether the article belongs to the SMS/messaging ecosystem."""
+    if not has_messaging_signal(article):
+        return RelevanceResult(
+            relevant=False,
+            category=None,
+            reason="no explicit SMS/messaging signal in title or feed text",
+        )
+    if is_obviously_off_topic(article):
+        return RelevanceResult(
+            relevant=False,
+            category=None,
+            reason="obvious voice/video/email topic without an SMS/messaging link",
+        )
     content = client.chat(
         [
             {"role": "system", "content": RELEVANCE_SYSTEM_PROMPT},

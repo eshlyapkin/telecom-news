@@ -39,7 +39,7 @@ def _seed(db: Database) -> None:
         Article(
             url="https://example.com/b",
             source_id="t",
-            title="Irrelevant fiber news",
+            title="Irrelevant SMS fiber news",
             body="Body B",
         )
     )
