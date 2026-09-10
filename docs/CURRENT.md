@@ -10,7 +10,7 @@ verified user-run results.
 - M0–M3: implemented.
 - M4: Telegram Bot API delivery, HTML formatting, retry, dry-run and atomic `processed → published`; live delivery verified in the test channel.
 - M5: one-shot `run`, `scripts/run_pipeline.sh`, pipeline logging, overlap lock and 15-minute cron operation verified in WSL.
-- M6: four RSS sources, multi-source collection, source health and a deterministic SMS/messaging relevance guard.
+- M6/M7: seven RSS sources, including three verified Russian telecom/IT feeds, multi-source collection, source health and a deterministic SMS/messaging relevance guard.
 - User verification: 23 articles published, 29 skipped, 0 new, 0 processed, 0 error.
 - User verification: `117 passed`, Ruff check/format clean in WSL.
 - User verification: DNS recovered after two transient WSL failures; subsequent source runs succeeded.
@@ -23,9 +23,13 @@ Enabled sources:
 - `twilio-blog`
 - `infobip-blog`
 - `gsma-newsroom`
+- `content-review` (ru)
+- `iksmedia` (ru)
+- `habr-cellular-news` (ru)
 
-All currently configured sources are English. A relevant Russian-language RSS/API
-source is not selected or verified yet.
+The three Russian feeds were checked as structured RSS endpoints before being added.
+Broader candidates from the supplied list were not added because they are less
+focused on telecom/communications or security rather than the project's core scope.
 
 ## Security status
 

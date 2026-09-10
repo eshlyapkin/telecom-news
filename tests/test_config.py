@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
-from telecom_news.config import Config, load_config
+from telecom_news.config import SOURCES, Config, load_config
 
 
 def test_load_config_returns_config() -> None:
     config = load_config()
     assert isinstance(config, Config)
+
+
+def test_verified_russian_sources_are_declared() -> None:
+    expected = {
+        "content-review": "https://content-review.com/feed.xml",
+        "iksmedia": "https://www.iksmedia.ru/rss/rss_yandex.rss",
+        "habr-cellular-news": "https://habr.com/ru/rss/hubs/cellular/news/?fl=ru",
+    }
+    for source_id, url in expected.items():
+        source = SOURCES[source_id]
+        assert source.url == url
+        assert source.language == "ru"
+        assert source.enabled is True
 
 
 def test_default_paths_point_into_project() -> None:

@@ -75,7 +75,10 @@ git config core.hooksPath .githooks
 - `sinch-blog` — `https://sinch.com/blog/feed/`;
 - `twilio-blog` — `https://www.twilio.com/en-us/blog.feed.xml`;
 - `infobip-blog` — `https://www.infobip.com/blog/feed`;
-- `gsma-newsroom` — `https://www.gsma.com/newsroom/feed/`.
+- `gsma-newsroom` — `https://www.gsma.com/newsroom/feed/`;
+- `content-review` — `https://content-review.com/feed.xml` (ru);
+- `iksmedia` — `https://www.iksmedia.ru/rss/rss_yandex.rss` (ru);
+- `habr-cellular-news` — `https://habr.com/ru/rss/hubs/cellular/news/?fl=ru` (ru).
 
 `run` без `--source` проверяет все enabled-источники. Ошибка одного источника
 не останавливает остальные; результат сохраняется в `source_health` и виден в

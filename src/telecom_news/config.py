@@ -123,6 +123,29 @@ SOURCES: dict[str, SourceConfig] = {
         language="en",
         enabled=True,
     ),
+    # Russian telecom and digital communications feeds verified during M7
+    # source discovery; all are structured RSS and do not require scraping.
+    "content-review": SourceConfig(
+        id="content-review",
+        type=SOURCE_TYPE_RSS,
+        url="https://content-review.com/feed.xml",
+        language="ru",
+        enabled=True,
+    ),
+    "iksmedia": SourceConfig(
+        id="iksmedia",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.iksmedia.ru/rss/rss_yandex.rss",
+        language="ru",
+        enabled=True,
+    ),
+    "habr-cellular-news": SourceConfig(
+        id="habr-cellular-news",
+        type=SOURCE_TYPE_RSS,
+        url="https://habr.com/ru/rss/hubs/cellular/news/?fl=ru",
+        language="ru",
+        enabled=True,
+    ),
 }
 
 
