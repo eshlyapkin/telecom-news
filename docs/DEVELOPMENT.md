@@ -31,8 +31,11 @@ git config core.hooksPath .githooks
 .venv/bin/python -m telecom_news status
 ```
 
-`run` — заглушка до M4. Локальная БД создаётся сама: `data/news.db`
-(переопределение — `TELECOM_NEWS_DB`; каталог `data/` не в git).
+`run` выполняет один полный цикл `collect → process → publish`. Локальная БД
+создаётся сама: `data/news.db` (переопределение — `TELECOM_NEWS_DB`; каталог
+`data/` не в git). Для запуска из cron/Task Scheduler используется
+`scripts/run_pipeline.sh`: он пишет лог в `data/logs/pipeline.log` и блокирует
+параллельные прогоны через `flock`.
 
 ## LM Studio (для команды process)
 
@@ -43,6 +46,27 @@ git config core.hooksPath .githooks
 - Настройки: `LMSTUDIO_BASE_URL`, `LMSTUDIO_MODEL` (пусто = первая загруженная
   модель), `TELECOM_NEWS_TARGET_LANG` (язык саммари, по умолчанию `ru`).
 - Без запущенного сервера `process` останавливается с exit 1, статьи остаются `new`.
+
+## Автоматический запуск
+
+Один цикл вручную:
+
+```bash
+./scripts/run_pipeline.sh
+```
+
+Для WSL рекомендуется Windows Task Scheduler: создать задачу с повтором каждые
+15 минут, действие — `wsl.exe`, аргументы —
+`-d <ваш-дистрибутив> -- bash -lc 'source ~/.config/telecom-news/env && cd /home/joe/Projects/telecom-news && ./scripts/run_pipeline.sh'`.
+Секреты храните вне репозитория, например в `~/.config/telecom-news/env` с
+правами `chmod 600`; файл должен экспортировать `TELEGRAM_BOT_TOKEN` и
+`TELEGRAM_CHAT_ID`. LM Studio должен быть доступен из WSL во время прогона.
+
+Для cron аналогичная запись запускает скрипт каждые 15 минут:
+
+```cron
+*/15 * * * * bash -lc 'source ~/.config/telecom-news/env && /home/joe/Projects/telecom-news/scripts/run_pipeline.sh'
+```
 
 ## Telegram (для команды publish)
 

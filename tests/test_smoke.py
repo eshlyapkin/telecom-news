@@ -27,16 +27,13 @@ def test_cli_help_succeeds() -> None:
     assert "usage" in result.stdout.lower()
 
 
-def test_cli_run_placeholder_reports_not_implemented() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "telecom_news", "run"],
-        capture_output=True,
-        text=True,
-    )
-    # Placeholder exits with a non-zero code and says so explicitly.
-    assert result.returncode != 0
-    combined = result.stdout + result.stderr
-    assert "not implemented" in combined.lower()
+def test_cli_run_is_registered() -> None:
+    from telecom_news.cli import build_parser
+
+    args = build_parser().parse_args(["run", "--dry-run", "--limit", "3"])
+    assert args.command == "run"
+    assert args.dry_run is True
+    assert args.limit == 3
 
 
 def test_cli_status_succeeds() -> None:

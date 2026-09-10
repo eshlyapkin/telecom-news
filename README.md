@@ -98,11 +98,12 @@ python3 -m venv .venv          # или: uv venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"         # dev-зависимости: pytest, ruff
 
-# Проверка CLI (M4: collect/status/process/publish работают; run — заглушка до M5)
+# Проверка CLI (M5: run выполняет collect/process/publish)
 python -m telecom_news --help
 python -m telecom_news collect --source sinch-blog --limit 3
 python -m telecom_news process --limit 3   # нужен запущенный LM Studio
 python -m telecom_news publish --dry-run
+python -m telecom_news run --dry-run --limit 3
 python -m telecom_news status
 
 # Тесты

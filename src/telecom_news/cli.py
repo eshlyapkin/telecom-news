@@ -34,23 +34,19 @@ def build_parser() -> argparse.ArgumentParser:
         prog="telecom_news",
         description=(
             "Daily monitoring and publishing of SMS/messaging industry news. "
-            "M3: collect/status/process work; run is a placeholder."
+            "M5: run executes one collect/process/publish cycle."
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command")
 
-    run_parser = subparsers.add_parser(
-        "run", help="Run the full pipeline (placeholder — implemented in M1–M4)"
-    )
-    run_parser.add_argument("--source", help="Source id to collect from (ignored until run lands)")
+    run_parser = subparsers.add_parser("run", help="Run collect, process and publish once (M5)")
+    run_parser.add_argument("--source", help="Source id to collect from (default: sinch-blog)")
     run_parser.add_argument(
-        "--dry-run", action="store_true", help="Do not publish to Telegram (ignored until M4)"
+        "--dry-run", action="store_true", help="Preview Telegram posts without sending them"
     )
-    run_parser.add_argument(
-        "--limit", type=int, help="Maximum number of articles (ignored until run lands)"
-    )
+    run_parser.add_argument("--limit", type=int, help="Maximum number of articles per stage")
 
     subparsers.add_parser("status", help="Show article counters by status")
 
@@ -321,6 +317,17 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
     return 1 if errors else 0
 
 
+def _cmd_run(source_id: str, limit: int | None, dry_run: bool) -> int:
+    """Run one pipeline cycle: collect, process, then publish."""
+    collect_code = _cmd_collect(source_id, limit)
+    if collect_code != 0:
+        return collect_code
+
+    process_code = _cmd_process(limit)
+    publish_code = _cmd_publish(limit, dry_run)
+    return 1 if process_code != 0 or publish_code != 0 else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
     from .config import load_config
@@ -336,9 +343,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "run":
-        # Full pipeline (collect -> normalize -> store/dedup -> LLM -> publish)
-        # is built across M1–M4.
-        return _not_implemented("run", "milestones M1–M4")
+        return _cmd_run(args.source or "sinch-blog", args.limit, args.dry_run)
     if args.command == "status":
         return _cmd_status()
     if args.command == "collect":

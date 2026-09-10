@@ -6,10 +6,10 @@
 Система ежедневного мониторинга и публикации новостей **прежде всего об SMS-индустрии** (A2P/P2A/P2P, SMS-вендоры/агрегаторы/carriers, hubs, маршрутизация/delivery/security/anti-fraud по SMS, партнёрства, регуляторика). Общие телеком-новости без связи с SMS/messaging отфильтровываются. Источники — ru и en. Pipeline: источники → сбор → нормализация → storage/dedup → LLM (LM Studio) → публикация в Telegram. Интерфейс MVP — CLI.
 
 ## Текущая стадия
-Implementation — **M4 завершён по mock-тестам**: Telegram Bot API, HTML-форматирование, retry, dry-run и идемпотентный статус published. Живая отправка в канал не проверена: нужны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID. Локально проверено: pytest 109 passed, ruff check/format чисты.
+Implementation — **M5 в работе**: M4 проверен живой отправкой (9 публикаций), M5 добавил одноразовый `run` (`collect → process → publish`) и `scripts/run_pipeline.sh` для cron/Windows Task Scheduler. Автоматический запуск по расписанию ещё не настроен на машине пользователя.
 
 ## Текущий milestone
-M4 — Telegram Publishing. **Реализация завершена; живая отправка ожидает chat_id.**
+M5 — Automation. **Код одноразового цикла готов; осталось настроить запуск каждые 15 минут в WSL/Windows Task Scheduler и проверить несколько циклов.**
 
 ## Завершён ли предыдущий milestone
 Да: M0–M3 завершены. Оговорка по M3: критерий «реальный прогон `process` с запущенным LM Studio» не мог быть проверен в песочнице (нет LM Studio) — NOT VERIFIED; вместо этого проверена вся обвязка (см. критерии ниже). Проверка на живой модели: `collect --source sinch-blog --limit 3`, затем `process`, затем `status` (ожидается: релевантные → `processed` с категорией и русским саммари, общие телеком → `skipped`).
@@ -26,7 +26,7 @@ M0–M4 + dev-инфраструктура (текущие изменения в
 - `pyproject.toml` (Python 3.10+, src-layout; runtime: httpx, feedparser; dev: pytest, ruff)
 - `src/telecom_news/`: M1/M2-модули + `llm/` (`client.py`: `LLMClient`, `LLMUnavailableError`, `LLMResponseError`, `parse_json_response`), `processors/relevance.py` (`check_relevance`, `CATEGORIES`, `prepare_article_text`), `processors/summarize.py` (`summarize`); `cli.py` (+ команда `process --limit`); `config.py` (+ `lmstudio_base_url`/`lmstudio_model`/`target_lang`, env `LMSTUDIO_*`, `TELECOM_NEWS_TARGET_LANG`); `storage/database.py` (+ `save_processing_result`)
 - Известные шероховатости (кандидаты на чистку): `main.py` — мёртвый дубликат CLI; `logging_setup.py` — параллельная реализация logging (CLI использует `logging_config`)
-- `tests/`: 109 тестов (M0–M4; MockTransport/tmp-БД/fake LLM, без реальной сети и продовой БД)
+- `tests/`: 112 тестов (M0–M5; MockTransport/tmp-БД/fake LLM, без реальной сети и продовой БД)
 - Dev-инфраструктура: ruff, `.githooks/`, `docs/DEVELOPMENT.md` (+ раздел LM Studio), `scripts/setup.sh`
 - `.venv/` (project-local). Локальная `data/news.db` (5 статей `new`, gitignored).
 
