@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 
 def compute_content_hash(text: str) -> str:
@@ -40,18 +40,18 @@ class Article:
     summary_raw: str = ""
     body: str = ""
     language: str = "en"  # 'ru' / 'en'
-    published_at: Optional[datetime] = None  # UTC, from the source
-    fetched_at: Optional[datetime] = None  # UTC, moment of collection
+    published_at: datetime | None = None  # UTC, from the source
+    fetched_at: datetime | None = None  # UTC, moment of collection
     content_hash: str = field(default="")
 
     # Filled in by later pipeline stages (M2–M4); not set at creation time.
-    id: Optional[int] = None  # internal PK assigned by storage (M2)
-    source_url: Optional[str] = None
+    id: int | None = None  # internal PK assigned by storage (M2)
+    source_url: str | None = None
     status: str = "new"  # new -> processed -> published (+ skipped, error)
-    relevance: Optional[str] = None  # 'relevant' / 'irrelevant' (LLM result)
-    category: Optional[str] = None  # technology/vendor/aggregator/...
-    llm_result: Optional[dict[str, Any]] = None
-    published_at_telegram: Optional[datetime] = None
+    relevance: str | None = None  # 'relevant' / 'irrelevant' (LLM result)
+    category: str | None = None  # technology/vendor/aggregator/...
+    llm_result: dict[str, Any] | None = None
+    published_at_telegram: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.content_hash:

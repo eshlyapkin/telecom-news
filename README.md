@@ -55,31 +55,39 @@
 
 ## Структура проекта
 
-Текущее состояние — **M0 Foundation завершён**: реализован только фундамент (package, доменная модель `Article`, конфигурация, logging, CLI skeleton, pytest). Остальные каталоги (`collectors/`, `processors/`, `storage/`) заполняются в M1–M2 по docs/ROADMAP.md.
+Текущее состояние — **M3 LLM Processing завершён**: M2 + клиент LM Studio, релевантность/категория/саммари, команда `process`. Прогон с живой моделью в песочнице не верифицирован (нужен LM Studio на вашей машине). Следующая — M4 Telegram Publishing по docs/ROADMAP.md.
 
 ```
 telecom-news/
 ├── README.md
 ├── .gitignore
-├── pyproject.toml              # Конфигурация Python-проекта (src-layout, без runtime-зависимостей)
+├── .editorconfig
+├── pyproject.toml              # Конфигурация Python-проекта (src-layout; runtime: httpx, feedparser; dev: pytest, ruff)
+├── .githooks/                  # pre-commit (diff--check + ruff), pre-push (pytest)
+├── scripts/setup.sh            # One-shot dev setup: .venv + install + хуки
 ├── src/
 │   └── telecom_news/
 │       ├── __init__.py         # Версия пакета
 │       ├── __main__.py         # python -m telecom_news
-│       ├── cli.py              # CLI (argparse): --help, run/status — заглушки до M1–M4
-│       ├── config.py           # Конфигурация: пути, log level + env-переменные
+│       ├── cli.py              # CLI: collect, status, process; run — заглушка до M4
+│       ├── config.py           # Конфигурация: пути, БД, LM Studio, log level, источники + env
 │       ├── logging_config.py   # Настройка stdlib logging
-│       └── models.py           # Доменная модель Article (без БД/persistence)
-├── tests/                      # pytest: smoke, models, config, logging (18 тестов)
-├── data/                       # Локальные данные (не в git)
+│       ├── models.py           # Доменная модель Article
+│       ├── collectors/         # base.py (RawItem, fetch+retry), rss.py (RSS-коллектор)
+│       ├── llm/                # client.py (LM Studio HTTP-клиент)
+│       ├── processors/         # normalize.py, dedup.py, relevance.py, summarize.py
+│       └── storage/            # database.py (SQLite, CRUD, статусы)
+├── tests/                      # pytest, 98 тестов (MockTransport/tmp_path/fake LLM, без реальной сети/БД)
+├── data/                       # Локальные данные (не в git): news.db
 │   └── .gitkeep
-└── docs/                       # Документация (ARCHITECTURE.md, ROADMAP.md и др.)
+└── docs/                       # Документация (ARCHITECTURE.md, ROADMAP.md, DEVELOPMENT.md и др.)
 ```
 
 ## Требования
 
 - Python 3.10+
-- SQLite — по умолчанию с M2 (пока не реализован)
+- SQLite — через stdlib `sqlite3`, БД создаётся автоматически
+- Для `process`: запущенный LM Studio с загруженной моделью (см. docs/DEVELOPMENT.md)
 
 ## Быстрый старт
 
@@ -87,10 +95,13 @@ telecom-news/
 # Project-local окружение (системный Python не используется)
 python3 -m venv .venv          # или: uv venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"         # dev-зависимости: pytest
+pip install -e ".[dev]"         # dev-зависимости: pytest, ruff
 
-# Проверка CLI (M0: skeleton; команды run/status — заглушки до M1–M4)
+# Проверка CLI (M3: collect/status/process работают; run — заглушка до M4)
 python -m telecom_news --help
+python -m telecom_news collect --source sinch-blog --limit 3
+python -m telecom_news process --limit 3   # нужен запущенный LM Studio
+python -m telecom_news status
 
 # Тесты
 pytest

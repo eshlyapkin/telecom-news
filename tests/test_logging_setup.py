@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import logging
 
-from telecom_news.logging_setup import setup_logging
 from telecom_news.config import load_config
+from telecom_news.logging_setup import setup_logging
 
 
 def test_setup_logging_configures_root() -> None:

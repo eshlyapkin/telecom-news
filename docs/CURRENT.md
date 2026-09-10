@@ -6,42 +6,45 @@
 Система ежедневного мониторинга и публикации новостей **прежде всего об SMS-индустрии** (A2P/P2A/P2P, SMS-вендоры/агрегаторы/carriers, hubs, маршрутизация/delivery/security/anti-fraud по SMS, партнёрства, регуляторика). Общие телеком-новости без связи с SMS/messaging отфильтровываются. Источники — ru и en. Pipeline: источники → сбор → нормализация → storage/dedup → LLM (LM Studio) → публикация в Telegram. Интерфейс MVP — CLI.
 
 ## Текущая стадия
-Implementation — **M0 завершён** (подтверждено: editable install, `python -m telecom_news --help`, pytest зелёные).
+Implementation — **M3 завершён** (код, mock-тесты и E2E через фейковый OpenAI-сервер проверены; прогон с живой моделью — NOT VERIFIED, нужен LM Studio на машине пользователя). pytest 98 passed, ruff чист.
 
 ## Текущий milestone
-M1 — One News Source. **Не начат.** Старт только после явного подтверждения пользователя.
+M4 — Telegram Publishing. **Не начат.** Старт только после явного подтверждения пользователя.
 
 ## Завершён ли предыдущий milestone
-Да: M0 завершён (см. «Фактически существующая реализация» и критерии готовности ниже).
+Да: M0–M3 завершены. Оговорка по M3: критерий «реальный прогон `process` с запущенным LM Studio» не мог быть проверен в песочнице (нет LM Studio) — NOT VERIFIED; вместо этого проверена вся обвязка (см. критерии ниже). Проверка на живой модели: `collect --source sinch-blog --limit 3`, затем `process`, затем `status` (ожидается: релевантные → `processed` с категорией и русским саммари, общие телеком → `skipped`).
 
 ## Следующий конкретный шаг
-Начать M1 по составу из docs/ROADMAP.md (только после подтверждения пользователя): выбор одного реального SMS/messaging-источника, `httpx` + `feedparser`, `collectors/base.py` + коллектор выбранного механизма, `processors/normalize.py` (`RawItem → Article`), CLI `collect --source <id>`. M1 НЕ начат.
+Начать M4 по составу из docs/ROADMAP.md (только после подтверждения пользователя): `delivery/telegram.py` (Bot API `sendMessage`, токен/chat_id из env), формат публикации, `publish --dry-run`, тестовая отправка в тестовый канал, `tests/test_telegram.py` (mock Bot API). Нужны токен бота и chat_id тестового канала. M4 НЕ начат.
 
 ## Ключевые решения, влияющие на следующий шаг
-- **accepted:** D-001 Python 3.10+ / src-layout; D-002 слои Collectors → Processors → Storage (+ llm/, delivery/); D-003 SQLite по умолчанию (реализация — M2); D-004 CLI для MVP, FastAPI deferred; D-008 Telegram delivery (реализация — M4).
-- **proposed:** D-007 — первый источник выбирается в M1 после фактической проверки (предпочтение RSS/API над scraping).
+- **accepted:** D-001…D-004, D-007 (`sinch-blog`), D-008 Telegram delivery (реализация — M4).
+- M3 зафиксировал: `LLMUnavailableError` (transport/5xx/нет моделей → прогон останавливается, exit 1, статьи остаются `new`) vs `LLMResponseError` (битый ответ → статья `error`, прогон продолжается); `process`: 0 завершён / 2 usage / 1 LLM недоступна; `target_lang` по умолчанию `ru` (ARCHITECTURE 3.9); пустой `LMSTUDIO_MODEL` = первая загруженная модель.
 
 ## Фактически существующая реализация
-Документация + завершённый M0 Foundation:
-- `pyproject.toml` (Python 3.10+, src-layout; build backend — setuptools; **runtime-зависимостей нет**; dev: pytest)
-- `src/telecom_news/`: `__init__.py`, `__main__.py`, `cli.py` (argparse; `--help`, `--version`; заглушки `run`/`status` с явным сообщением «not implemented yet» и exit code 2), `config.py` (`Config`: project_root, data_dir, log_level + env-переменные `TELECOM_NEWS_DATA_DIR`, `LOG_LEVEL`), `logging_config.py` (stdlib logging, `setup_logging(level)`), `models.py` (dataclass `Article` по ARCHITECTURE 3.4 + `compute_content_hash`)
-- Пустой каталог `src/telecom_news/api/` удалён (D-004); пустые каталоги `collectors/`, `processors/`, `storage/` не отслеживаются Git'ом и заполняются в M1–M2
-- `tests/`: `test_smoke.py`, `test_models.py`, `test_config.py`, `test_logging.py` (18 тестов, без сети/БД/LLM/Telegram)
-- `.venv/` (project-local; исключён .gitignore). Системный Python не изменялся.
+M0–M3 + dev-инфраструктура (незакоммиченные изменения в working tree — коммит только по запросу пользователя):
+- `pyproject.toml` (Python 3.10+, src-layout; runtime: httpx, feedparser; dev: pytest, ruff)
+- `src/telecom_news/`: M1/M2-модули + `llm/` (`client.py`: `LLMClient`, `LLMUnavailableError`, `LLMResponseError`, `parse_json_response`), `processors/relevance.py` (`check_relevance`, `CATEGORIES`, `prepare_article_text`), `processors/summarize.py` (`summarize`); `cli.py` (+ команда `process --limit`); `config.py` (+ `lmstudio_base_url`/`lmstudio_model`/`target_lang`, env `LMSTUDIO_*`, `TELECOM_NEWS_TARGET_LANG`); `storage/database.py` (+ `save_processing_result`)
+- Известные шероховатости (кандидаты на чистку): `main.py` — мёртвый дубликат CLI; `logging_setup.py` — параллельная реализация logging (CLI использует `logging_config`)
+- `tests/`: 98 тестов (M0–M2 + `test_llm_client.py` (MockTransport), `test_relevance.py` (fake LLM), `test_cli_process.py` (tmp-БД), + тесты `save_processing_result` и LM-конфига; без реальной сети/БД/LLM)
+- Dev-инфраструктура: ruff, `.githooks/`, `docs/DEVELOPMENT.md` (+ раздел LM Studio), `scripts/setup.sh`
+- `.venv/` (project-local). Локальная `data/news.db` (5 статей `new`, gitignored).
 
-**Не реализовано (по scope M0):** httpx/feedparser, реальные collectors, SQLite, LM Studio, Telegram, scheduler, scraping, FastAPI.
+**Не реализовано (scope M4+):** Telegram, scheduler, scraping, FastAPI.
 
 ## Blockers
-Нет. Для M1 понадобится выбор реального источника (D-007, proposed). Внешние зависимости LM Studio — M3, Telegram-токен/chat_id — M4.
+Нет. Для M4 нужны токен бота и chat_id тестового канала; для перепроверки M3 на живой модели — запущенный LM Studio.
 
-## Критерии готовности M0 (проверено)
-- `pip install -e .` в project-local venv: **выполнено** (uv pip install -e ".[dev]", Python 3.12.3; системный python3 не имеет pip/ensurepip, поэтому venv создан через `uv venv`)
-- `python -m telecom_news --help`: **работает**, печатает список команд (`run`, `status`), exit code 0
-- `pytest`: **зелёный** (18 passed; импорт пакета, создание Article, CLI help, config, logging setup)
+## Критерии готовности M3 (проверено, кроме живой модели)
+- Релевантная статья → `category` + саммари на целевом языке, статус `processed`: **выполнено на фейковой LLM** (E2E: 2 processed с категорией vendor и русским саммари); **на живой модели — NOT VERIFIED**
+- Нерелевантная → `skipped` без суммаризации: **выполнено на фейковой LLM** (E2E: 1 skipped); **на живой модели — NOT VERIFIED**
+- Недоступный LM Studio: явная ошибка, статьи не теряются, повторный прогон продолжает: **выполнено по-настоящему** (connection refused → exit 1, статьи остались `new`; + unit-тесты retry/5xx/таймаута)
+- `pytest`: **зелёный** (98 passed); `ruff check` + `format --check`: **чисто**
 
-## Scope M0 (Foundation) — завершён
-Входило: `pyproject.toml` (Python 3.10+, src-layout; **без внешних runtime-зависимостей**); package `src/telecom_news/` с `__init__.py`; удаление пустого каталога `api/` (D-004); `config.py` (пути, LM Studio endpoint, env — без реальных вызовов); стандартный Python logging; минимальная доменная модель **`Article` в `src/telecom_news/models.py`** (dataclass, без БД и persistence); минимальный CLI skeleton (`python -m telecom_news --help`, заглушки `run/status`); pytest infrastructure + smoke test.
+## Scope M3 (LLM Processing) — завершён
+Входило: `llm/client.py` (OpenAI-совместимый endpoint, таймаут 60с, retry, `LLMUnavailableError`, автоопределение модели); релевантность + 9 категорий; саммари с переводом на `target_lang`; `llm_result` JSON; `skipped` для нерелевантных; `process` с exit-кодами 0/2/1.
 
-НЕ входит: httpx; feedparser; реальный RSS/API collector; SQLite; LM Studio; Telegram; scheduler; scraping; FastAPI. Внешние зависимости (httpx, feedparser) добавляются в milestone, где становятся фактически необходимыми (M1).
+НЕ входило (и не сделано): публикация в Telegram; scheduler.
 
-Критерии готовности M0: `pip install -e .` работает в чистом venv; `python -m telecom_news --help` печатает список команд; `pytest` зелёный (импорт пакета, создание Article, CLI help).
+## Scope M2 (Storage and Deduplication) — завершён ранее
+SQLite (`storage/database.py`), дедупликация, `collect` с сохранением, рабочий `status`. Проверено двумя реальными прогонами и pytest.

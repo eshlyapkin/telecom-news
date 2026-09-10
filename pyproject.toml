@@ -8,15 +8,24 @@ version = "0.1.0"
 description = "Daily monitoring and publishing of SMS/messaging industry news (sources -> collect -> normalize -> storage/dedup -> LLM (LM Studio) -> Telegram). MVP interface: CLI."
 readme = "README.md"
 requires-python = ">=3.10"
-# M0 Foundation: no external runtime dependencies by design (ROADMAP M0).
-# httpx/feedparser are added in M1, LM Studio/Telegram clients in M3/M4.
+# Runtime: httpx + feedparser since M1 (collectors). LM Studio/Telegram clients arrive in M3/M4.
 dependencies = ["httpx", "feedparser"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["telecom_news"]

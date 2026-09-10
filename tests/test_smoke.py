@@ -39,12 +39,11 @@ def test_cli_run_placeholder_reports_not_implemented() -> None:
     assert "not implemented" in combined.lower()
 
 
-def test_cli_status_placeholder_reports_not_implemented() -> None:
+def test_cli_status_succeeds() -> None:
+    # Since M2 `status` is a working command (article counters by status).
     result = subprocess.run(
         [sys.executable, "-m", "telecom_news", "status"],
         capture_output=True,
         text=True,
     )
-    assert result.returncode != 0
-    combined = result.stdout + result.stderr
-    assert "not implemented" in combined.lower()
+    assert result.returncode == 0

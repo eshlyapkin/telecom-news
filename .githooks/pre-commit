@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# pre-commit: whitespace errors + ruff lint/format. Fast; tests run on pre-push.
+# Bypass (not recommended): git commit --no-verify
+set -u
+REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$REPO_ROOT" || exit 1
+
+fail=0
+
+echo "--- pre-commit: git diff --check ---"
+git diff --check || fail=1
+
+echo "--- pre-commit: ruff ---"
+RUFF=""
+if [ -x ".venv/bin/ruff" ]; then
+    RUFF=".venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then
+    RUFF="ruff"
+fi
+if [ -n "$RUFF" ]; then
+    "$RUFF" check . || fail=1
+    "$RUFF" format --check . || fail=1
+else
+    echo "ruff not found, skipping (run scripts/setup.sh to install dev extras)"
+fi
+
+if [ "$fail" -ne 0 ]; then
+    echo "pre-commit FAILED"
+    exit 1
+fi
+echo "pre-commit OK"

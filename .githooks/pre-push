@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# pre-push: full test suite. Bypass (not recommended): git push --no-verify
+set -u
+REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$REPO_ROOT" || exit 1
+
+PY=""
+if [ -x ".venv/bin/python" ]; then
+    PY=".venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+fi
+if [ -z "$PY" ]; then
+    echo "pre-push FAILED: no python found"
+    exit 1
+fi
+if ! "$PY" -m pytest --version >/dev/null 2>&1; then
+    echo "pre-push FAILED: pytest not installed for $PY (run scripts/setup.sh)"
+    exit 1
+fi
+"$PY" -m pytest -q || { echo "pre-push FAILED: tests are red"; exit 1; }
+echo "pre-push OK"

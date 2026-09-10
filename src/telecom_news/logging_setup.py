@@ -52,5 +52,6 @@ def setup_logging() -> None:
         root.addHandler(console)
         _HANDLERS_ADDED.add("console")
 
+
 # Expose the function for importers.
 __all__ = ["setup_logging"]
