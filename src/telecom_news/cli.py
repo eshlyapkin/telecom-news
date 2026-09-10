@@ -449,6 +449,8 @@ def _cmd_restore(input_path: Path) -> int:
 
 def _cmd_doctor(db_path: Path | None = None) -> int:
     """Check local storage and all configured external dependencies (M7)."""
+    import tempfile
+
     import httpx
 
     from .collectors import CollectorError, RssCollector
@@ -459,6 +461,15 @@ def _cmd_doctor(db_path: Path | None = None) -> int:
     config = load_config()
     path = db_path or config.db_path
     checks: list[tuple[str, bool, str]] = []
+
+    for name, directory in (("logs", config.logs_dir), ("backups", config.data_dir / "backups")):
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=directory, prefix=".doctor-", delete=True):
+                pass
+            checks.append((name, True, str(directory)))
+        except OSError as exc:
+            checks.append((name, False, str(exc)))
 
     try:
         db = Database(path)
