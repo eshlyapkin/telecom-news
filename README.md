@@ -104,6 +104,7 @@ python -m telecom_news collect --source sinch-blog --limit 3
 python -m telecom_news process --limit 3   # нужен запущенный LM Studio
 python -m telecom_news publish --dry-run
 python -m telecom_news run --dry-run --limit 3
+python -m telecom_news doctor
 python -m telecom_news status
 
 # Тесты

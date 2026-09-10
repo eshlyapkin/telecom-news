@@ -4,6 +4,11 @@ set -u
 REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
 cd "$REPO_ROOT" || exit 1
 
+if [ -x "scripts/check_secrets.sh" ]; then
+    scripts/check_secrets.sh || { echo "pre-push FAILED: secret check"; exit 1; }
+fi
+cd "$REPO_ROOT" || exit 1
+
 PY=""
 if [ -x ".venv/bin/python" ]; then
     PY=".venv/bin/python"

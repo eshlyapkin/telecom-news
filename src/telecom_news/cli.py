@@ -10,6 +10,7 @@ do anything that is not implemented yet (see docs/ROADMAP.md).
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -51,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--limit", type=int, help="Maximum number of articles per stage")
 
     subparsers.add_parser("status", help="Show article counters by status")
+    subparsers.add_parser("doctor", help="Check database and external dependencies (M7)")
 
     collect_parser = subparsers.add_parser(
         "collect", help="Collect one source and store new articles (M1–M2: RSS only)"
@@ -347,6 +349,77 @@ def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
     return 1 if collection_failed or process_code != 0 or publish_code != 0 else 0
 
 
+def _cmd_doctor(db_path: Path | None = None) -> int:
+    """Check local storage and all configured external dependencies (M7)."""
+    import httpx
+
+    from .collectors import CollectorError, RssCollector
+    from .config import SOURCE_TYPE_RSS, SOURCES, load_config
+    from .llm.client import LLMClient, LLMUnavailableError
+    from .storage.database import Database
+
+    config = load_config()
+    path = db_path or config.db_path
+    checks: list[tuple[str, bool, str]] = []
+
+    try:
+        db = Database(path)
+        db.count_by_status()
+        checks.append(("database", True, str(path)))
+    except (OSError, sqlite3.Error) as exc:
+        checks.append(("database", False, str(exc)))
+        db = None
+
+    if not config.telegram_bot_token or not config.telegram_chat_id:
+        checks.append(("telegram config", False, "TELEGRAM_BOT_TOKEN/CHAT_ID missing"))
+    else:
+        try:
+            url = f"https://api.telegram.org/bot{config.telegram_bot_token}/getMe"
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url)
+            data = response.json()
+            ok = response.is_success and data.get("ok") is True
+            detail = (
+                "Bot API reachable" if ok else str(data.get("description", response.status_code))
+            )
+            checks.append(("telegram", ok, detail))
+        except (httpx.HTTPError, ValueError) as exc:
+            checks.append(("telegram", False, str(exc)))
+
+    try:
+        model = LLMClient(
+            base_url=config.lmstudio_base_url,
+            model=config.lmstudio_model,
+            max_retries=1,
+        ).ensure_model()
+        checks.append(("lmstudio", True, model))
+    except LLMUnavailableError as exc:
+        checks.append(("lmstudio", False, str(exc)))
+
+    if db is not None:
+        for source in SOURCES.values():
+            if not source.enabled:
+                continue
+            if source.type != SOURCE_TYPE_RSS:
+                checks.append((f"source:{source.id}", False, "unsupported type"))
+                continue
+            try:
+                items = RssCollector(
+                    source_id=source.id, feed_url=source.url, language=source.language
+                ).collect(limit=1)
+                db.record_source_health(source.id, success=True, item_count=len(items))
+                checks.append((f"source:{source.id}", True, f"{len(items)} item(s)"))
+            except CollectorError as exc:
+                db.record_source_health(source.id, success=False, error=str(exc))
+                checks.append((f"source:{source.id}", False, str(exc)))
+
+    failed = False
+    for name, ok, detail in checks:
+        print(f"[{'OK' if ok else 'FAIL'}] {name}: {detail}")
+        failed = failed or not ok
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
     from .config import load_config
@@ -365,6 +438,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_run(args.source, args.limit, args.dry_run)
     if args.command == "status":
         return _cmd_status()
+    if args.command == "doctor":
+        return _cmd_doctor()
     if args.command == "collect":
         return _cmd_collect(args.source, args.limit)
     if args.command == "process":

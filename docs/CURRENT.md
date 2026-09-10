@@ -1,50 +1,60 @@
-# CURRENT — telecom-news (working state)
+# CURRENT — telecom-news
 
-Короткий canonical working-state для быстрого восстановления нового чата. Подробные документы читаются лениво (см. AI_WORKFLOW.md, Level 2). Актуальный HEAD определяется командой `git log -3 --oneline`, а не этим файлом.
+Canonical project handoff. Claims are based on the repository files, Git state and
+verified user-run results.
 
-## Проект и цель
-Система ежедневного мониторинга и публикации новостей **прежде всего об SMS-индустрии** (A2P/P2A/P2P, SMS-вендоры/агрегаторы/carriers, hubs, маршрутизация/delivery/security/anti-fraud по SMS, партнёрства, регуляторика). Общие телеком-новости без связи с SMS/messaging отфильтровываются. Источники — ru и en. Pipeline: источники → сбор → нормализация → storage/dedup → LLM (LM Studio) → публикация в Telegram. Интерфейс MVP — CLI.
+## Current status
 
-## Текущая стадия
-Implementation — **M6 в работе**: M4 проверен живой отправкой (9 публикаций), M5 добавил одноразовый `run` и scheduler script, M6 добавил четыре официальных RSS-источника, сбор всех enabled sources и source health. Автоматический запуск по расписанию настроен пользователем и проверен несколькими циклами.
+- Branch: `arena/01a08bb1-telecom-news`.
+- The working tree contains the M4–M6 implementation plus current security and documentation work; commit/push for this current documentation pass has not been performed.
+- M0–M3: implemented.
+- M4: Telegram Bot API delivery, HTML formatting, retry, dry-run and atomic `processed → published`; live delivery verified in the test channel.
+- M5: one-shot `run`, `scripts/run_pipeline.sh`, pipeline logging, overlap lock and 15-minute cron operation verified in WSL.
+- M6: four RSS sources, multi-source collection, source health and a deterministic SMS/messaging relevance guard.
+- User verification: 23 articles published, 29 skipped, 0 new, 0 processed, 0 error.
+- User verification: `117 passed`, Ruff check/format clean in WSL.
+- User verification: DNS recovered after two transient WSL failures; subsequent source runs succeeded.
 
-## Текущий milestone
-M6 — Multiple Sources. **Multi-source и source health готовы; добавлен deterministic guard против очевидного voice/video/email-шума. Осталось проверить новые циклы на реальных RSS и при необходимости расширить правила.**
+## Sources
 
-## Завершён ли предыдущий milestone
-Да: M0–M3 завершены. Оговорка по M3: критерий «реальный прогон `process` с запущенным LM Studio» не мог быть проверен в песочнице (нет LM Studio) — NOT VERIFIED; вместо этого проверена вся обвязка (см. критерии ниже). Проверка на живой модели: `collect --source sinch-blog --limit 3`, затем `process`, затем `status` (ожидается: релевантные → `processed` с категорией и русским саммари, общие телеком → `skipped`).
+Enabled sources:
 
-## Следующий конкретный шаг
-Получить `TELEGRAM_CHAT_ID` тестового канала и выполнить одну живую отправку с `publish --limit 1`, затем повторный запуск для проверки отсутствия дублей. Scheduler и полный `run` остаются scope M5.
+- `sinch-blog`
+- `twilio-blog`
+- `infobip-blog`
+- `gsma-newsroom`
 
-## Ключевые решения, влияющие на следующий шаг
-- **accepted:** D-001…D-004, D-007 (`sinch-blog`), D-008 Telegram delivery (реализация — M4).
-- M3 зафиксировал: `LLMUnavailableError` (transport/5xx/нет моделей → прогон останавливается, exit 1, статьи остаются `new`) vs `LLMResponseError` (битый ответ → статья `error`, прогон продолжается); `process`: 0 завершён / 2 usage / 1 LLM недоступна; `target_lang` по умолчанию `ru` (ARCHITECTURE 3.9); пустой `LMSTUDIO_MODEL` = первая загруженная модель.
+All currently configured sources are English. A relevant Russian-language RSS/API
+source is not selected or verified yet.
 
-## Фактически существующая реализация
-M0–M4 + dev-инфраструктура (текущие изменения в working tree; коммит только по запросу пользователя):
-- `pyproject.toml` (Python 3.10+, src-layout; runtime: httpx, feedparser; dev: pytest, ruff)
-- `src/telecom_news/`: M1/M2-модули + `llm/` (`client.py`: `LLMClient`, `LLMUnavailableError`, `LLMResponseError`, `parse_json_response`), `processors/relevance.py` (`check_relevance`, `CATEGORIES`, `prepare_article_text`), `processors/summarize.py` (`summarize`); `cli.py` (+ команда `process --limit`); `config.py` (+ `lmstudio_base_url`/`lmstudio_model`/`target_lang`, env `LMSTUDIO_*`, `TELECOM_NEWS_TARGET_LANG`); `storage/database.py` (+ `save_processing_result`)
-- Известные шероховатости (кандидаты на чистку): `main.py` — мёртвый дубликат CLI; `logging_setup.py` — параллельная реализация logging (CLI использует `logging_config`)
-- `tests/`: 116 тестов (M0–M6; MockTransport/tmp-БД/fake LLM, без реальной сети и продовой БД)
-- Dev-инфраструктура: ruff, `.githooks/`, `docs/DEVELOPMENT.md` (+ раздел LM Studio), `scripts/setup.sh`
-- `.venv/` (project-local). Локальная `data/news.db` (5 статей `new`, gitignored).
+## Security status
 
-**Не реализовано (scope M5+):** scheduler, scraping, FastAPI. Живая Telegram-отправка ещё не проверена.
+- The Telegram token was verified with Bot API `getMe`.
+- The token has been disclosed in chat during setup and must be treated as compromised until revoked and replaced again.
+- Runtime secrets belong outside the repository in `~/.config/telecom-news/env` with mode `600`.
+- `scripts/check_secrets.sh` and the pre-commit hook check staged additions for obvious Bot API tokens.
+- The `httpx` request URL logger is suppressed so tokens do not appear in normal INFO logs.
+- Token rotation is a user action and is **not verified as complete** in this handoff.
 
-## Blockers
-Нет. Для M4 нужны токен бота и chat_id тестового канала; для перепроверки M3 на живой модели — запущенный LM Studio.
+## Operational status
 
-## Критерии готовности M3 (проверено, кроме живой модели)
-- Релевантная статья → `category` + саммари на целевом языке, статус `processed`: **выполнено на фейковой LLM** (E2E: 2 processed с категорией vendor и русским саммари); **на живой модели — NOT VERIFIED**
-- Нерелевантная → `skipped` без суммаризации: **выполнено на фейковой LLM** (E2E: 1 skipped); **на живой модели — NOT VERIFIED**
-- Недоступный LM Studio: явная ошибка, статьи не теряются, повторный прогон продолжает: **выполнено по-настоящему** (connection refused → exit 1, статьи остались `new`; + unit-тесты retry/5xx/таймаута)
-- `pytest`: **зелёный** (98 passed); `ruff check` + `format --check`: **чисто**
+- `cron` in WSL is active and has produced successful 15-minute pipeline cycles.
+- A temporary DNS failure caused `exit_code=1` twice; retry/recovery worked and no article data was lost.
+- `doctor` is implemented and has mock coverage; live verification in the user's WSL is pending.
+- SQLite backup/recovery, rate limits and repeated-error notifications are not implemented yet.
 
-## Scope M3 (LLM Processing) — завершён
-Входило: `llm/client.py` (OpenAI-совместимый endpoint, таймаут 60с, retry, `LLMUnavailableError`, автоопределение модели); релевантность + 9 категорий; саммари с переводом на `target_lang`; `llm_result` JSON; `skipped` для нерелевантных; `process` с exit-кодами 0/2/1.
+## Next work
 
-НЕ входило (и не сделано): публикация в Telegram; scheduler.
+1. Revoke the disclosed token and replace it locally; do not paste the replacement into chat.
+2. Commit/push the pending security, hook, instruction and status documentation changes.
+3. Implement M7 `doctor` with checks for SQLite, source DNS/HTTP, LM Studio, Telegram and environment.
+4. Add SQLite backup/restore and interrupted-run recovery.
+5. Add rate limits and operational error reporting.
+6. Discover and verify at least one relevant Russian-language RSS/API source.
 
-## Scope M2 (Storage and Deduplication) — завершён ранее
-SQLite (`storage/database.py`), дедупликация, `collect` с сохранением, рабочий `status`. Проверено двумя реальными прогонами и pytest.
+## References
+
+- `docs/SECURITY.md` — token incident and rotation runbook.
+- `docs/SKILLS/telegram-token-rotation.md` — safe token rotation procedure.
+- `docs/SKILLS/m7-doctor-and-recovery.md` — next milestone procedure.
+- `docs/DEVELOPMENT.md` — environment, scheduler, sources and hooks.

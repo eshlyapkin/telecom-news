@@ -7,6 +7,14 @@ cd "$REPO_ROOT" || exit 1
 
 fail=0
 
+echo "--- pre-commit: secret scan ---"
+if [ -x "scripts/check_secrets.sh" ]; then
+    scripts/check_secrets.sh || fail=1
+else
+    echo "secret scanner missing"
+    fail=1
+fi
+
 echo "--- pre-commit: git diff --check ---"
 git diff --check || fail=1
 

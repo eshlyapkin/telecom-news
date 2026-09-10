@@ -97,6 +97,35 @@ SMS/messaging, а также очевидные voice/video/email-материа
 - Живая отправка в канал в этой среде не выполнялась: нужен chat ID тестового
   канала и явное предоставление переменных окружения пользователем.
 
+## Секреты и безопасность
+
+Telegram credentials не хранятся в репозитории. Подробный runbook ротации токена
+находится в `docs/SECURITY.md`, а повторяемая процедура — в
+`docs/SKILLS/telegram-token-rotation.md`. Перед commit hook запускает
+`scripts/check_secrets.sh` и блокирует очевидные Telegram Bot API tokens в
+staged additions. Если секрет попал в лог или чат, его нужно отозвать через
+BotFather до следующей отправки.
+
+## M7 и диагностика
+
+Команда `doctor` реализована и проверяет БД, Telegram Bot API, LM Studio и все
+enabled RSS-источники. Она возвращает `0`, если все проверки прошли, и `1`,
+если хотя бы одна зависимость недоступна. Acceptance criteria и recovery rules
+зафиксированы в `docs/SKILLS/m7-doctor-and-recovery.md`.
+
+Запуск:
+
+```bash
+.venv/bin/python -m telecom_news doctor
+```
+
+Текущий порядок перед M7-разработкой:
+
+1. проверить `git status` и `docs/CURRENT.md`;
+2. не публиковать секреты в issue, логи или документацию;
+3. после изменения кода выполнить полный pytest и Ruff;
+4. проверить `git diff --check` и staged secret scan.
+
 ## Тесты
 
 ```bash

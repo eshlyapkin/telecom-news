@@ -39,6 +39,11 @@ Do not automatically read the whole project documentation.
 Load ROADMAP, ARCHITECTURE and DECISIONS lazily and only when required
 for the current task.
 
+SECURITY
+
+Never store or print Telegram tokens or other credentials. Keep runtime secrets in
+a user-owned environment file outside the repository (for example,`~/.config/telecom-news/env`, mode 600). If a token appears in chat, logs, ascreenshot, or a commit, treat it as compromised: revoke it in BotFather androtate it. Run `docs/SKILLS/telegram-token-rotation.md` after rotation.
+
 WORKING RULES
 
 Work on one milestone or one explicitly defined subtask at a time.
