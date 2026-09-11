@@ -189,3 +189,34 @@ def test_narrow_sources_allow_the_llm_gate(monkeypatch) -> None:
         assert SOURCES[source_id].relevance_gate == "llm"
     for source_id in ("sinch-blog", "twilio-blog", "cnews-telecom"):
         assert SOURCES[source_id].relevance_gate == "strict"
+
+
+def test_article_max_age_days_env_override(monkeypatch) -> None:
+    monkeypatch.delenv("TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS", raising=False)
+    assert load_config().article_max_age_days == 30
+    monkeypatch.setenv("TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS", "7")
+    assert load_config().article_max_age_days == 7
+    monkeypatch.setenv("TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS", "0")
+    assert load_config().article_max_age_days == 0
+    monkeypatch.setenv("TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS", "junk")
+    assert load_config().article_max_age_days == 30
+
+
+def test_disabled_sources_env_forces_them_off(monkeypatch) -> None:
+    """TELECOM_NEWS_DISABLED_SOURCES survives `sources import` (unlike editing the catalog)."""
+    from telecom_news import config as config_module
+
+    original = dict(config_module.SOURCES)
+    try:
+        monkeypatch.setenv("TELECOM_NEWS_DISABLED_SOURCES", "2600hz, thundersms")
+        config_module._apply_disabled_override()
+        assert config_module.SOURCES["2600hz"].enabled is False
+        assert config_module.SOURCES["thundersms"].enabled is False
+        assert config_module.SOURCES["slicktext"].enabled is True
+
+        monkeypatch.setenv("TELECOM_NEWS_DISABLED_SOURCES", "no-such-source")
+        with pytest.raises(ValueError, match="unknown source id"):
+            config_module._apply_disabled_override()
+    finally:
+        config_module.SOURCES.clear()
+        config_module.SOURCES.update(original)

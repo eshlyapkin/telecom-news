@@ -55,3 +55,7 @@ node_modules/
 package.json
 package-lock.json
 docs/telegram_bot_details.txt
+
+# Local pipeline runtime artifacts
+data/backups/
+data/pipeline.lock

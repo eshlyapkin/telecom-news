@@ -21,6 +21,13 @@ DEFAULT_TIMEOUT: float = 15.0
 DEFAULT_MAX_RETRIES: int = 3
 DEFAULT_BACKOFF_BASE: float = 1.0  # seconds; waits 1s, 2s, ... between attempts
 USER_AGENT: str = "telecom-news/0.1 (+https://github.com/eshlyapkin/telecom-news)"
+# Some publishers sit behind Cloudflare/WAF and answer 403 to any non-browser
+# User-Agent (three catalog feeds did exactly that on 2026-09-11). The first
+# 403/406 is therefore retried once with a plain browser User-Agent.
+BROWSER_USER_AGENT: str = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
 
 
 class CollectorError(Exception):
@@ -63,22 +70,27 @@ def fetch_url(
     the project User-Agent is created.
     """
     last_error: Exception | None = None
+    user_agent = USER_AGENT
     for attempt in range(1, max_retries + 1):
         try:
             if client is None:
-                with httpx.Client(
-                    timeout=timeout,
-                    headers={"User-Agent": USER_AGENT},
-                    follow_redirects=True,
-                ) as owned:
-                    response = owned.get(url)
+                with httpx.Client(timeout=timeout, follow_redirects=True) as owned:
+                    response = owned.get(url, headers={"User-Agent": user_agent})
             else:
-                response = client.get(url)
+                response = client.get(url, headers={"User-Agent": user_agent})
             response.raise_for_status()
             return response.content
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             last_error = exc
+            if status in (403, 406) and user_agent != BROWSER_USER_AGENT:
+                logger.warning(
+                    "GET %s -> HTTP %s with the project User-Agent; retrying as a browser",
+                    url,
+                    status,
+                )
+                user_agent = BROWSER_USER_AGENT
+                continue
             if 500 <= status < 600 and attempt < max_retries:
                 logger.warning(
                     "GET %s -> HTTP %s (attempt %d/%d), retrying",
