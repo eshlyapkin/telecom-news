@@ -3,6 +3,29 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Статус расширения источников (2026-09-11)
+
+- Пользователь загрузил в `master` книгу
+  `docs/sms_messaging_rss_100_unique_sources_verified_2026-09-11.xlsx`
+  (100 уникальных источников, лист «A+ приоритет», 17 дополнительных
+  тематических лент, лист отклонённых, методология).
+- Импорт выполнен командой `python -m telecom_news sources import --csv
+  docs/...xlsx`: **каталог 102 записи — 42 новостные ленты и 60
+  status-эндпоинтов**; реестр `config.SOURCES` — **63 источника, 59
+  включённых** (было 19/17 до M8); `catalog_issues() == []`.
+- Status-эндпоинты объявлены с `enabled=False` и в `config.SOURCES` не
+  попадают: это ленты инцидентов, а не новости (D-016). Вид источника
+  определяется типом и URL, а не MIME: 60 строк таблицы помечены
+  `application/rss+xml`.
+- Разбор книги: 189 строк данных → 42 news + 60 status + 87 пропусков (54
+  дубля endpoint, 18 совпадений с рукописными записями `config.py`, 15 строк,
+  отклонённых таблицей). Повторный импорт даёт тот же файл (идемпотентность).
+- Проверено: `pytest -q` → **218 passed**; `ruff check`,
+  `ruff format --check`, `git diff --check` — чисто. **NOT VERIFIED:** живая
+  проверка новых лент (`sources verify` требует исходящей сети, у агента её
+  нет) и фактическая свежесть 40+ новых новостных фидов — это делается на
+  машине пользователя.
+
 ## Status (2026-09-11)
 
 - **M0–M7 are implemented.** `master` carries M0–M3 (`242ac0d`); M4–M7 live on

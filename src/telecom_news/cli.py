@@ -377,6 +377,7 @@ def _cmd_sources_import(csv_path: Path, output: Path | None = None, dry_run: boo
 
     from .config import SOURCES
     from .source_import import parse_rows, read_table, render_module
+    from .sources_catalog import CATALOG
 
     target = output or Path(__file__).resolve().parent / "sources_catalog.py"
     try:
@@ -384,11 +385,15 @@ def _cmd_sources_import(csv_path: Path, output: Path | None = None, dry_run: boo
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"error: cannot read the table: {exc}", file=sys.stderr)
         return 2
+    # Only hand-written entries of config.py win over the table. Entries that
+    # came from the catalog itself must not exclude their own re-import.
+    catalog_ids = {entry.id for entry in CATALOG}
+    curated_ids = set(SOURCES) - catalog_ids
     try:
         report = parse_rows(
             rows,
-            existing_urls={source.url for source in SOURCES.values()},
-            reserved_ids=set(SOURCES),
+            existing_urls={source.url for source in SOURCES.values() if source.id in curated_ids},
+            reserved_ids=curated_ids,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -396,10 +401,16 @@ def _cmd_sources_import(csv_path: Path, output: Path | None = None, dry_run: boo
 
     news = [entry for entry in report.entries if entry.kind == "news"]
     status = [entry for entry in report.entries if entry.kind == "status"]
+    per_sheet: dict[str, int] = {}
+    for row in rows:
+        sheet = str(row.get("__sheet") or "(csv)")
+        per_sheet[sheet] = per_sheet.get(sheet, 0) + 1
     print(
-        f"Parsed {len(rows)} row(s): {len(news)} news feed(s), {len(status)} status endpoint(s), "
-        f"{report.skipped_count} skipped."
+        f"Parsed {len(rows)} row(s) from {len(per_sheet)} sheet(s): {len(news)} news feed(s), "
+        f"{len(status)} status endpoint(s), {report.skipped_count} skipped."
     )
+    for sheet, count in per_sheet.items():
+        print(f"  {sheet}: {count} row(s)")
     for label, reason in report.skipped[:10]:
         print(f"  - skipped {label[:70]}: {reason[:80]}")
     if len(report.skipped) > 10:

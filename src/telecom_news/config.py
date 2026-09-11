@@ -170,10 +170,24 @@ SOURCES: dict[str, SourceConfig] = {
         language="en",
         enabled=True,
     ),
-    # Messaging-focused feeds added 2026-09-11 (D-014) now live in
-    # `sources_catalog.CATALOG` together with the bulk import of the source
-    # research table (D-016): mef-news, mobilesquared, total-telecom,
-    # simpletexting, textmagic. Edit them there.
+    # Messaging-focused feeds verified by hand on 2026-09-11 (D-014). They are
+    # declared here — not in the catalog — so that a bulk `sources import` from
+    # the research table cannot drop them: hand-written entries always win and
+    # the matching table row is skipped.
+    "mef-news": SourceConfig(
+        id="mef-news",
+        type=SOURCE_TYPE_RSS,
+        url="https://mobileecosystemforum.com/feed/",
+        language="en",
+        enabled=True,
+    ),  # A+ — MEF weekly digest: RCS/A2P/OTP business messaging
+    "mobilesquared": SourceConfig(
+        id="mobilesquared",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.mobilesquared.co.uk/feed/",
+        language="en",
+        enabled=True,
+    ),  # A+ — A2P SMS/RCS/WhatsApp market research; low volume, high precision
     # Russian telecom and digital communications feeds verified during M7
     # source discovery; all are structured RSS and do not require scraping.
     "content-review": SourceConfig(

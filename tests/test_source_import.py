@@ -222,7 +222,7 @@ def test_sources_command_lists_the_catalog(capsys) -> None:
     out = capsys.readouterr().out
 
     assert "Catalog:" in out
-    assert "mef-news" in out
+    assert CATALOG[0].id in out
     assert "kind" in out
 
 
@@ -319,3 +319,146 @@ def test_sources_import_reports_a_bad_table(tmp_path: Path, capsys) -> None:
     bad.write_text("Комментарий\nничего полезного\n", encoding="utf-8")
     assert cli._cmd_sources_import(bad) == 2
     assert "cannot find column" in capsys.readouterr().err
+
+
+def test_read_table_reads_every_data_sheet_of_a_workbook(tmp_path: Path) -> None:
+    """A workbook with summary/methodology sheets yields only source rows."""
+    openpyxl = __import__("openpyxl")
+    workbook = openpyxl.Workbook()
+    summary = workbook.active
+    summary.title = "Сводка"
+    summary.append(["Метрика", "Значение"])
+    summary.append(["Источников", "100"])
+    data = workbook.create_sheet("100 уникальных")
+    data.append(HEADERS)
+    data.append(
+        [
+            "EN",
+            "SlickText",
+            "https://www.slicktext.com/blog/feed/",
+            "application/rss+xml",
+            "SMS vendor / marketing",
+            "A+",
+            "SMS marketing",
+            "2026-09-11",
+            "РАБОТАЕТ",
+            "",
+            "",
+        ]
+    )
+    priority = workbook.create_sheet("A+ приоритет")
+    priority.append(HEADERS)
+    priority.append(
+        [
+            "EN",
+            "SlickText",
+            "https://www.slicktext.com/blog/feed/",
+            "application/rss+xml",
+            "SMS vendor / marketing",
+            "A+",
+            "SMS marketing",
+            "2026-09-11",
+            "РАБОТАЕТ",
+            "",
+            "",
+        ]
+    )
+    path = tmp_path / "book.xlsx"
+    workbook.save(path)
+
+    rows = read_table(path)
+
+    assert len(rows) == 2, "summary sheet must be ignored, data sheets kept"
+    assert {row["__sheet"] for row in rows} == {"100 уникальных", "A+ приоритет"}
+
+    report = parse_rows(rows)
+    assert [entry.id for entry in report.entries] == ["slicktext"]
+    assert report.skipped_count == 1
+    assert "duplicate endpoint" in report.skipped[0][1]
+
+
+def test_import_does_not_exclude_entries_that_came_from_the_catalog(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Regression: after a first import the catalog is part of config.SOURCES.
+
+    Those rows must not be treated as hand-written curated entries, otherwise a
+    second import would silently drop everything it had imported before.
+    """
+    from telecom_news import sources_catalog
+    from telecom_news.config import SourceConfig
+
+    catalog_entry = sources_catalog.CatalogEntry(
+        id="slicktext", url="https://www.slicktext.com/blog/feed/", kind=KIND_NEWS
+    )
+    monkeypatch.setattr(sources_catalog, "CATALOG", (catalog_entry,))
+    monkeypatch.setattr(
+        "telecom_news.config.SOURCES",
+        {
+            "slicktext": SourceConfig(id="slicktext", url=catalog_entry.url, language="en"),
+            "twilio-blog": SourceConfig(
+                id="twilio-blog", url="https://www.twilio.com/en-us/blog.feed.xml", language="en"
+            ),
+        },
+    )
+    path = tmp_path / "sheet.csv"
+    path.write_text(
+        "\ufeff" + ",".join(HEADERS) + "\n"
+        "EN,SlickText,https://www.slicktext.com/blog/feed/,application/rss+xml,SMS vendor,A+,"
+        "SMS marketing,2026-09-11,РАБОТАЕТ,,\n"
+        "EN,Twilio,https://www.twilio.com/en-us/blog.feed.xml,application/rss+xml,SMS vendor,A+,"
+        "CPaaS,2026-09-11,РАБОТАЕТ,,\n",
+        encoding="utf-8",
+    )
+
+    assert cli._cmd_sources_import(path, output=tmp_path / "out.py") == 0
+    out = capsys.readouterr().out
+
+    assert "1 news feed(s)" in out, out
+    generated = (tmp_path / "out.py").read_text(encoding="utf-8")
+    assert 'id="slicktext"' in generated
+    assert "curated entry wins" in out
+
+
+def test_rendered_module_keeps_lines_within_the_project_limit() -> None:
+    """The generated catalog is a normal source file: no ruff E501 in it."""
+    source = render_module(CATALOG, generated_from="table.xlsx", generated_at="2026-09-11")
+    offenders = [
+        (index, len(line))
+        for index, line in enumerate(source.splitlines(), start=1)
+        if len(line) > 100
+    ]
+    assert offenders == []
+    assert "note=" in source and "\\n" not in source.split("note=", 1)[1][:200]
+
+
+def test_parse_rows_maps_headers_per_sheet() -> None:
+    """Sheets of the book have different headers: rejected rows use «Endpoint».
+
+    With one shared mapping the rejected sheet lost its endpoint column and every
+    row looked like an empty row, which hid the real reason for the skip.
+    """
+    rows = [
+        {
+            "__sheet": "100 уникальных",
+            "Язык": "EN",
+            "Источник / издатель": "Vendor",
+            "RSS / Atom endpoint": "https://vendor.example/feed",
+            "Тематика": "SMS",
+        },
+        {
+            "__sheet": "Не включено",
+            "Кандидат": "Rejected",
+            "Endpoint": "https://rejected.example/feed",
+            "Статус": "Не подтверждён / не работает",
+            "Причина": "Исключён: HTTP 410 при проверке.",
+        },
+    ]
+    report = parse_rows(rows)
+    assert [entry.id for entry in report.entries] == ["vendor"]
+    assert report.skipped == (
+        (
+            "https://rejected.example/feed",
+            "excluded by the table: Не подтверждён / не работает",
+        ),
+    )

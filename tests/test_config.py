@@ -113,19 +113,36 @@ def test_d011_only_low_signal_feeds_ship_disabled() -> None:
     }
 
 
-def test_russian_sources_are_the_majority_of_the_registry() -> None:
+def test_russian_sources_stay_represented_after_the_catalog_import() -> None:
+    """2026-09-11: the verified research table added ~40 EN news feeds.
+
+    The registry is no longer RU-majority (20 ru of 63 sources), so instead of a
+    majority this pins the count and the curated ru feeds the project relies on.
+    """
     ru = [source for source in SOURCES.values() if source.language == "ru"]
-    assert len(ru) == 15
-    assert len(ru) * 2 >= len(SOURCES)
+    assert len(ru) == 20
+    for source_id in (
+        "cnews-telecom",
+        "cnews-corp",
+        "securitylab-news",
+        "anti-malware-news",
+        "habr-cellular-news",
+        "content-review",
+    ):
+        assert source_id in SOURCES
 
 
 def test_no_source_url_carries_tracking_parameters() -> None:
-    """Discovery notes came with utm_* junk; config must store clean endpoints."""
+    """Discovery notes came with utm_* junk; config must store clean endpoints.
+
+    Query strings that belong to the publisher's own feed URL are fine (Habr's
+    ``?fl=ru``, Alertify's ``?x=1`` from the verified research table) — tracking
+    junk is not.
+    """
+    tracking = ("utm_", "fbclid", "gclid", "yclid", "mc_cid", "mc_eid")
     for source_id, source in SOURCES.items():
-        assert "utm_" not in source.url, source_id
-        assert "?" not in source.url or source.url == (
-            "https://habr.com/ru/rss/hubs/cellular/news/?fl=ru"
-        ), source_id
+        for marker in tracking:
+            assert marker not in source.url, (source_id, marker)
 
 
 def test_source_ids_and_urls_are_unique() -> None:
