@@ -154,3 +154,68 @@ def test_summarize_asks_english_for_en() -> None:
 def test_empty_summary_is_response_error() -> None:
     with pytest.raises(LLMResponseError):
         summarize(_FakeLLM(['{"summary": "  "}']), _article(), target_lang="ru")
+
+
+# --- D-011: Russian-language coverage of the deterministic guard -------------
+
+
+def _ru_article(title: str, body: str = "") -> Article:
+    return Article(url="https://example.com/ru", source_id="cnews-telecom", title=title, body=body)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "МТС запустила защиту от СМС-мошенничества для корпоративных клиентов",
+        "Оператор внедрил код подтверждения вместо пароля в мобильном приложении",
+        "Банк запустил официального чат-бота в Telegram для сообщений клиентам",
+        "Разработана платформа А2П-сообщений для банков",
+        "Эксперты описали новую схему смшинга через подмену номера",
+        "Мессенджер ввёл бизнес-рассылки для ритейла",
+    ],
+)
+def test_russian_messaging_wording_reaches_the_llm(title: str) -> None:
+    """A Cyrillic story must not be dropped before the LLM sees it."""
+    assert has_messaging_signal(_ru_article(title)) is True
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "МегаФон расширил зону LTE для трёх тысяч населённых пунктов",
+        "Билайн запустил 5G с увеличением скорости мобильного интернета",
+        "Ростелеком установил камеры видеонаблюдения на избирательных участках",
+        "В России разработан комплект СВЧ-чипов для радаров и БПЛА",
+    ],
+)
+def test_russian_generic_telecom_stays_out_without_llm(title: str) -> None:
+    """General telecom/5G/сamera news is still gated off — the guard is RU-aware,
+    not disabled for Russian text."""
+    fake = _FakeLLM(['{"relevant": true, "category": "carrier"}'])
+    assert has_messaging_signal(_ru_article(title)) is False
+    assert check_relevance(fake, _ru_article(title)).relevant is False
+    assert fake.calls == []
+
+
+def test_russian_voice_topic_rejected_by_title_rule() -> None:
+    """The title rule makes the off-topic guard reachable from check_relevance."""
+    article = _ru_article(
+        "Как настроить видеозвонки в корпоративной АТС",
+        "Инструкция касается и SMS-уведомлений о пропущенных вызовах.",
+    )
+    assert has_messaging_signal(article) is True
+    assert is_obviously_off_topic(article) is True
+    fake = _FakeLLM(['{"relevant": true, "category": "technology"}'])
+    assert check_relevance(fake, article).relevant is False
+    assert fake.calls == []
+
+
+def test_russian_messaging_title_survives_voice_reference() -> None:
+    """A messaging story that merely mentions voice calls is not rejected."""
+    article = _ru_article(
+        "СМС-оповещение останется доступным при голосовых вызовах",
+        "Клиент получает короткое сообщение, если абонент недоступен.",
+    )
+    assert is_obviously_off_topic(article) is False
+    fake = _FakeLLM(['{"relevant": true, "category": "product_service", "reason": "SMS"}'])
+    assert check_relevance(fake, article).relevant is True

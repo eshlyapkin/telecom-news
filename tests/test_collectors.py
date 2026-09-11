@@ -79,6 +79,28 @@ def test_collector_collects_through_mock_transport() -> None:
     assert all(item.source_id == "sample" for item in items)
 
 
+def test_collector_ignores_content_type_of_the_response() -> None:
+    """nag.ru serves a valid RSS body under ``text/html`` (D-011).
+
+    The collector parses the response bytes and never inspects the declared
+    content type, such sources still work; only a body that really is not a
+    feed fails (see test_parse_feed_rejects_garbage).
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=SAMPLE_RSS.encode("utf-8"),
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+
+    collector = RssCollector("nag-all", "https://nag.ru/rss/all", language="ru")
+    items = collector.collect(client=_mock_client(handler))
+
+    assert [item.language for item in items] == ["ru", "ru"]
+    assert len(items) == 2
+
+
 def test_collector_limit_is_respected() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=SAMPLE_RSS.encode("utf-8"))

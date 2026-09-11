@@ -35,7 +35,9 @@ MAX_INPUT_CHARS = 4000
 # Cheap deterministic guard for broad vendor feeds. It prevents obvious
 # voice/video/developer material from reaching the LLM and being misclassified
 # as messaging merely because the publisher is a communications company.
-MESSAGING_TERMS = (
+MESSAGING_TERMS: tuple[str, ...] = (
+    # Latin script. These also match Russian articles that keep the Latin
+    # spelling ("SMS-рассылки"), but see the Cyrillic block below.
     "sms",
     "a2p",
     "p2a",
@@ -52,8 +54,30 @@ MESSAGING_TERMS = (
     "smishing",
     "short message",
     "business message",
+    "telegram",
+    "chatbot",
+    # Cyrillic spellings and transliterations. Russian outlets write "СМС",
+    # "чат-бот", "мошенничество с кодом подтверждения" — a Latin-only list
+    # skipped every such article before the LLM ever saw it, which made the
+    # RU sources added in M7 publish nothing at all (see DECISIONS.md D-011).
+    "смс",
+    "эсэмэс",
+    "смшинг",
+    "ммс",
+    "а2п",
+    "мессендж",
+    "чат-бот",
+    "чатбот",
+    "вотсап",
+    "телеграм",
+    "код подтверждения",
+    "одноразовый пароль",
 )
-OBVIOUSLY_OFF_TOPIC_TERMS = (
+# Deliberately excluded: "сообщени" (matches "по сообщению пресс-службы" in
+# every press release), "рассылк" (mostly email marketing noise), "верификац"
+# (KYC/fintech noise), "ркс" (Cyrillic "RCS" collides with unrelated "РКС").
+# They would turn this guard into a no-op and spend LM Studio calls on junk.
+OBVIOUSLY_OFF_TOPIC_TERMS: tuple[str, ...] = (
     "video chat",
     "programmable video",
     "web rtc",
@@ -65,20 +89,48 @@ OBVIOUSLY_OFF_TOPIC_TERMS = (
     "sip trunk",
     "email marketing",
     "email sending",
+    "voip",
+    # Russian equivalents, same intent as the Latin entries above.
+    "видеозвон",
+    "видеосвяз",
+    "голосовая связь",
+    "голосовые вызовы",
+    "голосовой звонок",
+    "email-рассылк",
+    "почтовая рассылк",
 )
+
+
+def _haystack(article: Article) -> str:
+    return f"{article.title} {article.body}".casefold()
 
 
 def has_messaging_signal(article: Article) -> bool:
     """Return true when the text explicitly signals the target ecosystem."""
-    text = f"{article.title} {article.body}".casefold()
-    return any(term in text for term in MESSAGING_TERMS)
+    return any(term in _haystack(article) for term in MESSAGING_TERMS)
 
 
 def is_obviously_off_topic(article: Article) -> bool:
-    """Return true for clear non-SMS content from broad communication feeds."""
-    text = f"{article.title} {article.body}".casefold()
-    return any(term in text for term in OBVIOUSLY_OFF_TOPIC_TERMS) and not has_messaging_signal(
-        article
+    """Return true for clear non-SMS content from broad communication feeds.
+
+    Two independent ways in, so the guard can actually reject material:
+
+    1. an off-topic term in the **title** while the title carries no messaging
+       term — the title defines the story, an incidental body mention of "SMS"
+       must not rescue a video/voice product announcement;
+    2. an off-topic term anywhere when there is no messaging signal at all.
+
+    Before D-011 only rule 2 existed, and :func:`check_relevance` already
+    returned early for articles without a signal, so rule 2 could never fire
+    there and the whole guard was dead code.
+    """
+    title = (article.title or "").casefold()
+    if any(term in title for term in OBVIOUSLY_OFF_TOPIC_TERMS) and not any(
+        term in title for term in MESSAGING_TERMS
+    ):
+        return True
+    return any(term in _haystack(article) for term in OBVIOUSLY_OFF_TOPIC_TERMS) and not (
+        has_messaging_signal(article)
     )
 
 

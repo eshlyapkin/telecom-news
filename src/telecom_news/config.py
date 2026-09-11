@@ -146,6 +146,105 @@ SOURCES: dict[str, SourceConfig] = {
         language="ru",
         enabled=True,
     ),
+    # Russian telecom/security feeds added after the RU source review of
+    # 2026-09-11 (see DECISIONS.md D-011). The grade in each trailing comment is
+    # the domain-relevance rating from that review; every URL is the outlet's own
+    # published feed endpoint with tracking parameters removed. "agent verified"
+    # = fetched and fresh items seen by the agent on 2026-09-11; "user verified"
+    # = confirmed by the user but not re-proven here (the agent sandbox has no
+    # outbound network). Disabled entries stay declared so they can be switched
+    # on without a code change (M6 rule); they skip collect/run/doctor.
+    # --- CNews (official category feeds, application/xml) ---
+    "cnews-telecom": SourceConfig(
+        id="cnews-telecom",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.cnews.ru/inc/rss/telecom.xml",
+        language="ru",
+        enabled=True,
+    ),  # A — "Телеком"; agent verified
+    "cnews-safe": SourceConfig(
+        id="cnews-safe",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.cnews.ru/inc/rss/safe.xml",
+        language="ru",
+        enabled=True,
+    ),  # B+ — "Безопасность": SMS/OTP fraud, anti-fraud; agent verified
+    "cnews-biz": SourceConfig(
+        id="cnews-biz",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.cnews.ru/inc/rss/biz.xml",
+        language="ru",
+        enabled=True,
+    ),  # B+ — "ИКТ-бизнес": сделки, M&A, vendors; user verified
+    "cnews-internet": SourceConfig(
+        id="cnews-internet",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.cnews.ru/inc/rss/internet.xml",
+        language="ru",
+        enabled=True,
+    ),  # B-/C — мессенджеры и их регулирование; user verified
+    "cnews-corp": SourceConfig(
+        id="cnews-corp",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.cnews.ru/inc/rss/corp.xml",
+        language="ru",
+        enabled=False,
+    ),  # B — "Интеграция": mostly deployment PR, off to limit LLM load
+    # --- SecurityLab (text/xml) ---
+    "securitylab-news": SourceConfig(
+        id="securitylab-news",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.securitylab.ru/_Services/Export/RSS/news/",
+        language="ru",
+        enabled=True,
+    ),  # B+ — smishing/OTP fraud, telecom security; user verified
+    "securitylab-analytics": SourceConfig(
+        id="securitylab-analytics",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.securitylab.ru/_Services/Export/RSS/analytics/",
+        language="ru",
+        enabled=True,
+    ),  # B — anti-fraud/security analytics; user verified
+    "securitylab-vulnerabilities": SourceConfig(
+        id="securitylab-vulnerabilities",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.securitylab.ru/_Services/Export/RSS/vulnerabilities/",
+        language="ru",
+        enabled=False,
+    ),  # B-/C — mostly non-messaging CVE noise
+    # --- Anti-Malware.ru ---
+    "anti-malware-news": SourceConfig(
+        id="anti-malware-news",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.anti-malware.ru/news/feed",
+        language="ru",
+        enabled=True,
+    ),  # B+ — SMS-bombing, OTP fraud; agent verified (items of 2026-09-11)
+    "anti-malware-analytics": SourceConfig(
+        id="anti-malware-analytics",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.anti-malware.ru/taxonomy/term/76/feed",
+        language="ru",
+        enabled=True,
+    ),  # B — anti-fraud analytics; user verified
+    "anti-malware-press": SourceConfig(
+        id="anti-malware-press",
+        type=SOURCE_TYPE_RSS,
+        url="https://www.anti-malware.ru/press/feed",
+        language="ru",
+        enabled=False,
+    ),  # B — press releases, overlaps anti-malware-news
+    # --- NAG ---
+    "nag-all": SourceConfig(
+        id="nag-all",
+        type=SOURCE_TYPE_RSS,
+        url="https://nag.ru/rss/all",
+        language="ru",
+        enabled=False,
+    ),  # A-/B+ — carriers/routing/regulation. The endpoint answers but serves
+    # text/html, and the agent could not confirm entries through it. Enable
+    # after a live `collect --source nag-all` returns items (note: collect exits
+    # 2 on a disabled source, so flip `enabled` for that test run).
 }
 
 
