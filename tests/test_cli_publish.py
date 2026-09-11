@@ -143,3 +143,39 @@ def test_publish_sends_each_language_to_its_own_channel(
     # Nothing is sent twice on a rerun, and a half-finished article is completed.
     assert _cmd_publish(None, False, db_path=path) == 0
     assert len(FakeClient.sent) == 2
+
+
+def test_pre_m8_published_rows_are_not_reposted(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A database from before M8 has published rows without delivery records.
+
+    Re-sending them duplicates old posts in the channel (the user saw 10 of the
+    23 legacy rows re-posted on 2026-09-11), so publish records them as sent.
+    """
+    path = tmp_path / "news.db"
+    _seed(path)
+    db = Database(path)
+    db.set_status(1, "processed")
+    db.mark_published(1)  # published by an older version: no `deliveries` row
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    sends: list[tuple[str, str]] = []
+
+    class FakeClient:
+        def __init__(self, token: str, **kwargs) -> None:
+            pass
+
+        def send_message(self, chat_id: str, text: str) -> dict:
+            sends.append((chat_id, text))
+            return {"ok": True, "result": {"message_id": 1}}
+
+    import telecom_news.delivery.telegram as telegram
+
+    monkeypatch.setattr(telegram, "TelegramClient", FakeClient)
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert sends == [], "a pre-M8 published article must not be sent again"
+    out = capsys.readouterr().out
+    assert "already published before delivery tracking" in out
+    assert db.sent_deliveries() == {("chat", 1, "ru")}
+    assert db.count_by_status()["published"] == 1

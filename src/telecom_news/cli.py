@@ -148,6 +148,13 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument(
         "--limit", type=int, default=None, help="Maximum number of articles to collect"
     )
+    collect_parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=None,
+        help="Ignore items older than N days (0 = keep everything; "
+        "default: TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS, 30)",
+    )
 
     process_parser = subparsers.add_parser(
         "process", help="Run LLM relevance/category/summary over 'new' articles (M3)"
@@ -176,7 +183,12 @@ def _process_summary(processed: int, skipped: int, errors: int, unfinished: bool
     return f"Done: {processed} processed, {skipped} skipped, {errors} error(s){suffix}."
 
 
-def _cmd_collect(source_id: str, limit: int | None, db_path: Path | None = None) -> int:
+def _cmd_collect(
+    source_id: str,
+    limit: int | None,
+    max_age_days: int | None = None,
+    db_path: Path | None = None,
+) -> int:
     """Collect one source, store new articles, print results (M2).
 
     Exit codes: 0 = success; 2 = usage error (unknown/disabled source,
@@ -186,6 +198,7 @@ def _cmd_collect(source_id: str, limit: int | None, db_path: Path | None = None)
     from .config import SOURCE_TYPE_RSS, SOURCES, get_source, load_config
     from .processors import normalize_item
     from .processors.dedup import store_new
+    from .processors.freshness import is_stale
     from .storage.database import Database
 
     if limit is not None and limit < 1:
@@ -206,8 +219,10 @@ def _cmd_collect(source_id: str, limit: int | None, db_path: Path | None = None)
             file=sys.stderr,
         )
         return 2
+    config = load_config()
+    age_limit = config.article_max_age_days if max_age_days is None else max_age_days
     collector = RssCollector(source_id=source.id, feed_url=source.url, language=source.language)
-    db = Database(db_path or load_config().db_path)
+    db = Database(db_path or config.db_path)
     try:
         raw_items = collector.collect(limit=limit)
     except CollectorError as exc:
@@ -216,9 +231,20 @@ def _cmd_collect(source_id: str, limit: int | None, db_path: Path | None = None)
         return 1
     db.record_source_health(source.id, success=True, item_count=len(raw_items))
     stored_new = 0
+    stale = 0
     print(f"Collected {len(raw_items)} article(s) from '{source.id}' ({source.url}):")
     for position, raw in enumerate(raw_items, start=1):
         article = normalize_item(raw)
+        if is_stale(article.published_at, age_limit):
+            stale += 1
+            assert article.published_at is not None
+            print(
+                f"\n[{position}] {article.title or '(no title)'} "
+                f"[ignored: older than {age_limit} day(s)]"
+            )
+            print(f"    url: {article.url}")
+            print(f"    published: {article.published_at.isoformat()} | lang: {article.language}")
+            continue
         article_id, is_new = store_new(db, article)
         stored_new += 1 if is_new else 0
         marker = "new" if is_new else "duplicate"
@@ -228,7 +254,13 @@ def _cmd_collect(source_id: str, limit: int | None, db_path: Path | None = None)
         print(
             f"    published: {published} | lang: {article.language} | hash: {article.content_hash}"
         )
-    print(f"\nStored {stored_new} new, skipped {len(raw_items) - stored_new} duplicate(s).")
+    duplicates = len(raw_items) - stored_new - stale
+    print(f"\nStored {stored_new} new, skipped {duplicates} duplicate(s), ignored {stale} stale.")
+    if stale and age_limit:
+        print(
+            f"Note: {stale} item(s) older than {age_limit} day(s) were not stored "
+            "(TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS, 0 = keep everything)."
+        )
     return 0
 
 
@@ -290,7 +322,7 @@ def _cmd_sources(
             "language": entry.language,
             "grade": entry.grade,
             "gate": entry.gate,
-            "enabled": entry.enabled,
+            "enabled": (SOURCES[entry.id].enabled if entry.id in SOURCES else entry.enabled),
             "verified": entry.verified,
             "topic": entry.topic,
         }
@@ -299,6 +331,7 @@ def _cmd_sources(
     ]
     if enabled_only:
         rows = [row for row in rows if row["enabled"]]
+    enabled_count = sum(1 for row in rows if row["enabled"])
     issues = catalog_issues(entries)
     counts = catalog_counts(entries)
 
@@ -322,7 +355,7 @@ def _cmd_sources(
             + ", ".join(f"{key}: {value}" for key, value in sorted(counts["language"].items()))
             + " | by grade: "
             + ", ".join(f"{key}: {value}" for key, value in sorted(counts["grade"].items()))
-            + f" | pipeline registry: {len(SOURCES)} news source(s)"
+            + f" | pipeline registry: {len(SOURCES)} news source(s), {enabled_count} enabled"
         )
         if issues:
             print("Catalog issues:")
@@ -688,6 +721,7 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
         return 2
     candidates = db.recent_articles(statuses=("processed", "published"))
     sent = db.sent_deliveries()
+    tracked_articles = {article_id for _chat_id, article_id, _lang in sent}
     client = (
         None
         if dry_run
@@ -706,6 +740,16 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
             if (str(chat_id), article.id, lang) not in sent
         ]
         if not pending:
+            continue
+        if article.status == "published" and article.id not in tracked_articles:
+            # Legacy rows: published before the `deliveries` table existed (pre-M8
+            # database) have no delivery records at all. Sending them again would
+            # repost old news into the channel, so they are recorded as delivered
+            # instead. Articles published in a language nobody targets yet are not
+            # affected: they carry at least one delivery row.
+            for lang, chat_id in pending:
+                db.record_delivery(str(chat_id), article.id, lang, status="sent")
+            print(f"[{article.id}] already published before delivery tracking (no re-send)")
             continue
         if limit is not None and previewed >= limit:
             break
@@ -1135,10 +1179,17 @@ def _cmd_doctor(db_path: Path | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
-    from .config import load_config
     from .logging_config import setup_logging
 
-    config = load_config()
+    try:
+        from .config import load_config
+
+        config = load_config()
+    except ValueError as exc:
+        # Importing .config validates the registry (duplicates, unknown ids in
+        # TELECOM_NEWS_DISABLED_SOURCES); a typo must not dump a traceback.
+        print(f"error: invalid configuration: {exc}", file=sys.stderr)
+        return 2
     setup_logging(config.log_level)
 
     parser = build_parser()
@@ -1166,7 +1217,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "restore":
         return _cmd_restore(args.input)
     if args.command == "collect":
-        return _cmd_collect(args.source, args.limit)
+        return _cmd_collect(args.source, args.limit, args.max_age_days)
     if args.command == "process":
         return _cmd_process(args.limit)
     if args.command == "publish":

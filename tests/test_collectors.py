@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from telecom_news.collectors import CollectorError, RssCollector, parse_feed
-from telecom_news.collectors.base import fetch_url
+from telecom_news.collectors.base import BROWSER_USER_AGENT, USER_AGENT, fetch_url
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
@@ -182,3 +182,33 @@ def test_collector_wraps_http_failure_as_collector_error() -> None:
     collector = RssCollector("sample", "https://example.com/feed/", backoff_base=0)
     with pytest.raises(CollectorError):
         collector.collect(client=_mock_client(handler))
+
+
+def test_fetch_url_retries_403_with_a_browser_user_agent() -> None:
+    """Three catalog feeds answer 403 to the project UA and 200 to a browser UA."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        agent = request.headers.get("user-agent", "")
+        seen.append(agent)
+        if agent == USER_AGENT:
+            return httpx.Response(403, text="blocked")
+        return httpx.Response(200, text="<rss version='2.0'><channel/></rss>")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    body = fetch_url("https://example.com/feed", client=client)
+
+    assert body.startswith(b"<rss")
+    assert seen == [USER_AGENT, BROWSER_USER_AGENT]
+
+
+def test_parse_feed_reports_a_broken_feed_instead_of_an_empty_one() -> None:
+    """A feed with a broken item used to look like a valid feed with 0 items."""
+    broken = (
+        b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        b'<rss version="2.0"><channel><title>T</title>\n'
+        b"<item><title>Post</title><link>https://x.example/1</lin</item>\n"
+        b"</channel></rss>"
+    )
+    with pytest.raises(CollectorError):
+        parse_feed(broken, "broken")

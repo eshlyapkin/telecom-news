@@ -52,10 +52,6 @@ def parse_feed(
 ) -> list[RawItem]:
     """Parse RSS/Atom bytes into :class:`RawItem` records (no network)."""
     parsed = feedparser.parse(feed_bytes)
-    if parsed.bozo and not parsed.entries:
-        raise CollectorError(
-            f"could not parse feed of source '{source_id}': {parsed.bozo_exception}"
-        )
     items: list[RawItem] = []
     for entry in parsed.entries:
         url = (entry.get("link") or "").strip()
@@ -74,6 +70,12 @@ def parse_feed(
                 content=_entry_content(entry),
                 language=default_language,
             )
+        )
+    if parsed.bozo and not items:
+        # Without this guard a structurally broken feed (truncated XML, invalid
+        # encoding) would be recorded as "ok, 0 items" and stay invisible.
+        raise CollectorError(
+            f"could not parse feed of source '{source_id}': {parsed.bozo_exception}"
         )
     return items
 
