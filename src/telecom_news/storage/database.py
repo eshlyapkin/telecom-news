@@ -156,6 +156,12 @@ def _row_to_article(row: sqlite3.Row) -> Article:
 class Database:
     """SQLite-backed article store. Creates schema and directories on first use."""
 
+    # Articles that were already in 'error' when the attempts counter did not
+    # exist yet were requeued by every single run of the old code, so they are
+    # treated as having exhausted their retries (D-015). `recover
+    # --max-attempts 0` is the documented way to bring them back.
+    PREVIOUS_ERROR_ATTEMPTS = 3
+
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
 
@@ -178,7 +184,14 @@ class Database:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(articles)")}
         if "attempts" not in columns:
             conn.execute("ALTER TABLE articles ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
-            logger.info("migrated articles table: added attempts column")
+            cursor = conn.execute(
+                "UPDATE articles SET attempts = ? WHERE status = 'error'",
+                (Database.PREVIOUS_ERROR_ATTEMPTS,),
+            )
+            logger.info(
+                "migrated articles table: added attempts column; parked %d pre-existing error(s)",
+                cursor.rowcount,
+            )
 
     def find_id(self, *, content_hash: str, url: str) -> int | None:
         """Id of the article with this hash or url, or None when unknown."""
@@ -663,8 +676,9 @@ class Database:
 
         Articles that already failed ``max_attempts`` times are left in ``error``:
         requeueing them every run made ``run`` spend its whole processing budget
-        on the same broken items (D-015). ``max_attempts=None`` restores the old
-        unconditional behaviour and is used by tests and manual recovery.
+        on the same broken items (D-015). ``max_attempts=None`` is the manual,
+        unconditional retry: it also clears the counter, so the article gets a
+        full set of fresh attempts instead of parking again after one run.
         """
         condition = "status = 'error'"
         params: list[Any] = []
@@ -683,6 +697,10 @@ class Database:
                 placeholders = ",".join("?" for _ in ids)
                 cursor = conn.execute(
                     f"UPDATE articles SET status = 'new' WHERE id IN ({placeholders})", ids
+                )
+            elif max_attempts is None:
+                cursor = conn.execute(
+                    "UPDATE articles SET status = 'new', attempts = 0 WHERE status = 'error'"
                 )
             else:
                 cursor = conn.execute(

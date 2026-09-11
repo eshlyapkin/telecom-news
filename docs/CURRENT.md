@@ -198,7 +198,10 @@ outbound network (`curl` to any host fails), so they are NOT VERIFIED here.
 молчал бесконечно. Исправление: колонка `articles.attempts` (аддитивная
 миграция), `Database.mark_error()` считает попытки, `reset_errors(max_attempts=3)`
 не возвращает «запаркованные» статьи, `recover [--max-attempts N]`,
-`diagnose` показывает `Parked errors` и подсказывает `recover --max-attempts 0`.
+`diagnose` показывает `Parked errors` и подсказывает `recover --max-attempts 0`
+(он же обнуляет счётчик). Миграция помечает строки, которые были в `error` до
+появления счётчика, как исчерпавшие ретраи: иначе накопленный «хвост» ошибок
+после обновления разом вернулся бы в очередь и снова перекрыл свежие статьи.
 Регрессионный тест: 3 «отравленные» статьи + 1 свежая → после 4 прогонов свежая
 `processed`, отравленные остаются `error`.
 

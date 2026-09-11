@@ -290,7 +290,12 @@ def test_reset_errors_returns_only_retryable_articles(tmp_path: Path) -> None:
 
 
 def test_existing_database_gets_attempts_column(tmp_path: Path) -> None:
-    """A database created before D-015 (no attempts column) is migrated in place."""
+    """A database created before D-015 (no attempts column) is migrated in place.
+
+    Pre-existing error rows are parked, not requeued: the old code had already
+    retried them on every run, and flooding the queue again would repeat the
+    very starvation D-015 fixes.
+    """
     import sqlite3
 
     path = tmp_path / "legacy.db"
@@ -309,6 +314,10 @@ def test_existing_database_gets_attempts_column(tmp_path: Path) -> None:
 
     db = Database(path)
     assert db.count_by_status()["error"] == 1
-    assert db.mark_error(1) == 1
+    assert db.reset_errors(max_attempts=3) == 0, "old failures must not flood the queue"
+    assert db.parked_errors(max_attempts=3) == 1
+
+    # A manual retry still works, and a further failure increments the counter.
+    assert db.reset_errors(max_attempts=None) == 1
+    assert db.mark_error(1) == 1  # 0 after the manual reset, 1 after this failure
     assert db.reset_errors(max_attempts=2) == 1
-    assert db.get_unprocessed()[0].attempts == 1
