@@ -178,3 +178,37 @@ def test_diagnose_reports_articles_parked_after_retries(
     assert code == 0
     assert "Parked errors (retries exhausted): 1" in out
     assert "recover --max-attempts 0" in out
+
+
+def test_diagnose_ignores_stale_errors_of_disabled_sources(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """D-019: a feed switched off keeps its old error row but is not counted."""
+    from dataclasses import replace
+
+    from telecom_news import config as config_module
+
+    monkeypatch.setenv("TELECOM_NEWS_DATA_DIR", str(tmp_path))
+    _set_credentials(monkeypatch)
+    db = Database(tmp_path / "news.db")
+    db.record_source_health("commlawblog", success=False, item_count=0, error="HTTP 403")
+    db.record_source_health("iksmedia", success=False, item_count=0, error="broken feed")
+    db.record_source_health("slicktext", success=True, item_count=3)
+    monkeypatch.setattr(
+        config_module,
+        "SOURCES",
+        {
+            source_id: replace(source, enabled=False)
+            if source_id in {"commlawblog", "iksmedia"}
+            else source
+            for source_id, source in config_module.SOURCES.items()
+        },
+    )
+    _write_log(tmp_path, _log_text(("2026-09-11T17:45:00+00:00", ["Collected 0 article(s):"])))
+
+    code = cli._cmd_diagnose(offline=True, now=NOW)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "Failing sources" not in out
+    assert "Disabled sources with stale errors (not counted): commlawblog, iksmedia" in out

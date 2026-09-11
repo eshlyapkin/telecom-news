@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,8 +11,10 @@ from telecom_news.bot import (
     BOT_OFFSET_KEY,
     LANGS,
     UI,
+    AnswerCallback,
     EditKeyboard,
     SendText,
+    describe_update,
     handle_update,
     poll_once,
 )
@@ -207,6 +210,50 @@ def test_poll_once_handles_updates_and_persists_offset(tmp_path: Path) -> None:
     client.offsets.clear()
     poll_once(db, client, now=NOW)  # type: ignore[arg-type]
     assert client.offsets == [12]
+
+
+def test_poll_once_logs_ignored_channel_posts(tmp_path: Path, caplog) -> None:
+    """D-019: a command typed in the channel is dropped, but the log says so."""
+    db = _db(tmp_path)
+    channel_post = {
+        "update_id": 30,
+        "channel_post": {
+            "chat": {"id": -100123, "title": "SMS Telecom News"},
+            "text": "/start",
+        },
+    }
+    client = _FakeBotClient([channel_post])
+
+    with caplog.at_level(logging.INFO, logger="telecom_news.bot"):
+        stats = poll_once(db, client, now=NOW)  # type: ignore[arg-type]
+
+    assert stats.updates == 1 and stats.actions == []
+    assert "channel post" in caplog.text and "private chat" in caplog.text
+    assert db.get_state(BOT_OFFSET_KEY) == "31"
+
+
+def test_describe_update_summarizes_each_update_kind() -> None:
+    channel = {
+        "update_id": 7,
+        "channel_post": {"chat": {"id": -100123, "title": "SMS Telecom News"}, "text": "/start"},
+    }
+    line = describe_update(channel, [])
+
+    assert "update 7" in line and "channel post" in line
+    assert "SMS Telecom News" in line and "private chat" in line
+
+    private = {"update_id": 8, "message": {"chat": {"id": 42}, "text": "/start"}}
+    line = describe_update(private, [SendText(chat_id="42", text="hi")])
+    assert "message '/start'" in line and "1 action(s)" in line
+
+    callback = {
+        "update_id": 9,
+        "callback_query": {"data": "lang:toggle:en", "message": {"chat": {"id": 42}}},
+    }
+    line = describe_update(callback, [AnswerCallback(callback_query_id="1")])
+    assert "lang:toggle:en" in line and "1 action(s)" in line
+
+    assert "unsupported" in describe_update({"update_id": 10}, [])
 
 
 # --- planner ----------------------------------------------------------------

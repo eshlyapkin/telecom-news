@@ -304,3 +304,17 @@ def test_backlog_is_reported_while_articles_wait_for_the_llm() -> None:
     backlog = next(finding for finding in report.findings if finding.code == "backlog")
     assert backlog.severity == "info"
     assert "7 article(s)" in backlog.message
+
+
+def test_disabled_sources_with_stale_errors_are_listed_but_not_counted() -> None:
+    """D-019: a switched-off feed keeps its last error row but is not a failure."""
+    facts = _facts(ignored_sources=("commlawblog", "iksmedia"))
+
+    report = analyze(facts)
+
+    text = render(report, facts)
+
+    assert not any(finding.code == "sources-failing" for finding in report.findings)
+    assert report.blocking is False
+    assert "Failing sources" not in text
+    assert "Disabled sources with stale errors (not counted): commlawblog, iksmedia" in text

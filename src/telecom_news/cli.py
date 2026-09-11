@@ -528,10 +528,21 @@ def _cmd_diagnose(
         except (sqlite3.Error, OSError) as exc:
             print(f"warning: cannot read the database: {exc}", file=sys.stderr)
             db_exists = False
+    # A disabled source is never checked again, so its last error row would stay
+    # in source_health forever and make diagnose warn about a feed that is
+    # already switched off (D-019). Count only enabled sources; list the rest.
+    enabled_ids = {source_id for source_id, source in SOURCES.items() if source.enabled}
     failing = tuple(
         (str(item["source_id"]), str(item["last_error"]))
         for item in health
-        if item.get("last_error")
+        if item.get("last_error") and str(item["source_id"]) in enabled_ids
+    )
+    ignored = tuple(
+        sorted(
+            str(item["source_id"])
+            for item in health
+            if item.get("last_error") and str(item["source_id"]) not in enabled_ids
+        )
     )
 
     log_path = config.logs_dir / "pipeline.log"
@@ -564,6 +575,7 @@ def _cmd_diagnose(
         oldest_processed_at=oldest_processed_at,
         enabled_sources=sum(1 for source in SOURCES.values() if source.enabled),
         failing_sources=failing,
+        ignored_sources=ignored,
         parked_errors=parked_errors,
         telegram_configured=bool(config.telegram_bot_token and config.telegram_chat_id),
         log_path=log_path,

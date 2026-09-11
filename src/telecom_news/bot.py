@@ -296,6 +296,38 @@ class BotRunStats:
     actions: list[str] = field(default_factory=list)
 
 
+def describe_update(update: dict[str, Any], actions: list[Action]) -> str:
+    """One-line summary of a Telegram update for the bot log (D-019).
+
+    The bot is a member of the news channel, so it also receives ``channel_post``
+    updates there. Only private messages and button presses produce actions:
+    a command typed in the channel is consumed and dropped, and without this log
+    line that looks exactly like "the bot is silent".
+    """
+    update_id = update.get("update_id")
+    prefix = f"update {update_id}" if update_id else "update"
+    channel_post = update.get("channel_post")
+    if isinstance(channel_post, dict):
+        chat = channel_post.get("chat") or {}
+        where = chat.get("title") or chat.get("username") or chat.get("id") or "?"
+        return (
+            f"{prefix}: channel post in {where!r} ignored — subscriptions live in the "
+            "private chat (open the bot and press /start)"
+        )
+    callback = update.get("callback_query")
+    if isinstance(callback, dict):
+        data = str(callback.get("data") or "")
+        chat = (callback.get("message") or {}).get("chat") or {}
+        return f"{prefix}: button {data!r} in chat {chat.get('id')} → {len(actions)} action(s)"
+    message = update.get("message")
+    if isinstance(message, dict):
+        chat = message.get("chat") or {}
+        text = str(message.get("text") or "").strip()
+        command = text.split()[0] if text else "(no text)"
+        return f"{prefix}: message {command!r} in chat {chat.get('id')} → {len(actions)} action(s)"
+    return f"{prefix}: unsupported update type ignored"
+
+
 def poll_once(
     db: Database,
     client: TelegramClient,
@@ -313,6 +345,7 @@ def poll_once(
         update_id = int(update.get("update_id") or 0)
         actions = handle_update(db, update, now=now)
         execute_actions(client, actions)
+        logger.info("%s", describe_update(update, actions))
         stats.actions.extend(type(action).__name__ for action in actions)
         if update_id:
             db.set_state(BOT_OFFSET_KEY, str(update_id + 1))
