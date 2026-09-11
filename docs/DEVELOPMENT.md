@@ -70,7 +70,9 @@ git config core.hooksPath .githooks
 
 ## Источники новостей
 
-Сейчас включены четыре официальных RSS-источника:
+17 включённых RSS-источников; узкие ленты (`content-review`, `anti-malware-*`,
+`securitylab-*`) передают релевантность LLM без keyword-guard (D-012), остальные
+фильтруются детерминированно. Основные:
 
 - `sinch-blog` — `https://sinch.com/blog/feed/`;
 - `twilio-blog` — `https://www.twilio.com/en-us/blog.feed.xml`;
@@ -78,7 +80,9 @@ git config core.hooksPath .githooks
 - `gsma-newsroom` — `https://www.gsma.com/newsroom/feed/`;
 - `content-review` — `https://content-review.com/feed.xml` (ru);
 - `iksmedia` — `https://www.iksmedia.ru/rss/rss_yandex.rss` (ru);
-- `habr-cellular-news` — `https://habr.com/ru/rss/hubs/cellular/news/?fl=ru` (ru).
+- `habr-cellular-news` — `https://habr.com/ru/rss/hubs/cellular/news/?fl=ru` (ru);
+- `mef-news` — `https://mobileecosystemforum.com/feed/` (en, D-014);
+- `mobilesquared` — `https://www.mobilesquared.co.uk/feed/` (en, D-014).
 
 `run` без `--source` проверяет все enabled-источники. Ошибка одного источника
 не останавливает остальные; результат сохраняется в `source_health` и виден в
@@ -125,11 +129,80 @@ enabled RSS-источники. Она возвращает `0`, если все
 .venv/bin/python -m telecom_news doctor
 ```
 
+`diagnose` отвечает на вопрос «почему ничего не публикуется»: читает счётчики
+статей, `source_health`, последние блоки прогонов из `data/logs/pipeline.log` и
+(если не указан `--offline`) пробует LM Studio и Telegram Bot API, после чего печатает
+вердикт. Команда ничего не пишет в БД и не отправляет сообщений; exit code `1`
+означает, что найдена блокирующая причина.
+
+```bash
+.venv/bin/python -m telecom_news diagnose            # вердикт + доказательства
+.venv/bin/python -m telecom_news diagnose --offline   # без сетевых проб
+.venv/bin/python -m telecom_news diagnose --json      # для скриптов
+```
+
+M8+: каталог источников (D-016):
+
+```bash
+.venv/bin/python -m telecom_news sources                     # список каталога (news)
+.venv/bin/python -m telecom_news sources --kind all --json   # все эндпоинты, включая status
+.venv/bin/python -m telecom_news sources --verify --verify-limit 10   # быстрая живая проверка
+.venv/bin/python -m telecom_news sources --verify              # все 59 включённых лент (несколько минут)
+.venv/bin/python -m telecom_news sources import --csv sheet.csv --dry-run
+.venv/bin/python -m telecom_news sources import --csv sheet.csv   # перезаписать sources_catalog.py
+```
+
+Реестр вырос до 63 источников (59 включённых), поэтому `doctor` и `run` теперь
+последовательно обходят 59 лент: таймаут каждой — 15 с, то есть при недоступной
+сети один прогон `doctor` может идти минуты. Для быстрой проверки после
+обновления сначала `sources --verify --verify-limit 10`, и только потом полный
+`doctor`.
+
+Каталог — `src/telecom_news/sources_catalog.py`: `kind="news"` попадает в
+`config.SOURCES` и публикуется, `kind="status"` (`status.<vendor>/history.rss`,
+`*.statuspage.io`) только объявлен — это ленты инцидентов, а не новости.
+Импорт принимает **весь XLSX** (все листы, нужен `openpyxl` из dev-зависимостей)
+или CSV одного листа: колонки, тип источника, статус проверки и язык
+распознаются автоматически, строки «не вошёл / не подтверждён / 404 / timeout»
+отбрасываются, дубли и совпадения с рукописными записями `config.py`
+пропускаются. Рукописные записи (`sinch-blog`, `twilio-blog`, `mef-news`,
+`mobilesquared`, CNews/SecurityLab/Anti-Malware/Habr) при повторном импорте не
+теряются.
+
+Текущий импорт (2026-09-11): 102 записи каталога (42 news + 60 status),
+63 источника в реестре, 59 включённых. Столько лент каждый прогон `run`
+обходит целиком, поэтому первый живой прогон стоит замерить:
+`time ./scripts/run_pipeline.sh` и `python -m telecom_news diagnose`.
+
+M8: языки, подписки и бот:
+
+```bash
+.venv/bin/python -m telecom_news bot --once          # обработать команды один раз (из шедулера)
+.venv/bin/python -m telecom_news bot                 # long polling (долгоживущий процесс)
+.venv/bin/python -m telecom_news deliver --dry-run   # предпросмотр рассылки подписчикам
+.venv/bin/python -m telecom_news deliver             # отправить подписчикам
+```
+
+Переменные окружения M8: `TELECOM_NEWS_TARGET_LANGS=ru,en` (набор языков публикации;
+старый `TELECOM_NEWS_TARGET_LANG` продолжает работать), `TELEGRAM_CHAT_ID_EN` (канал
+для второго языка; первый язык берёт `TELEGRAM_CHAT_ID`), `SUBSCRIBER_MAX_AGE_HOURS`,
+`SUBSCRIBER_MAX_PER_CYCLE`, `SUBSCRIBER_MAX_ATTEMPTS`. Подписки заводятся сами:
+пользователь пишет боту `/start` и выбирает языки кнопками. `run` теперь выполняет
+`collect → process → publish → deliver`.
+
 Recovery и backup SQLite:
 
 ```bash
-.venv/bin/python -m telecom_news recover
+.venv/bin/python -m telecom_news recover                     # вернёт не более 3-х попыток
+.venv/bin/python -m telecom_news recover --max-attempts 0    # принудительно вернуть всё
 ```
+
+Статья, которую модель не может обработать, после 3 попыток остаётся в `error`
+и больше не блокирует очередь (D-015); `diagnose` показывает такие статьи
+как «Parked errors». Статьи, которые были в `error` до обновления на версию с
+D-015, миграция сразу считает исчерпавшими ретраи — чтобы разом вернувшийся
+«хвост» ошибок не перекрыл свежие новости. Вернуть их в работу:
+`recover --max-attempts 0` (обнуляет счётчик попыток).
 
 `run` автоматически возвращает статьи со статусом `error` в очередь `new` перед
 обработкой.

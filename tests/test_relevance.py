@@ -5,6 +5,8 @@ Fake LLM, no network: canned replies plus prompt-content assertions.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from telecom_news.llm.client import LLMResponseError
@@ -219,3 +221,22 @@ def test_russian_messaging_title_survives_voice_reference() -> None:
     assert is_obviously_off_topic(article) is False
     fake = _FakeLLM(['{"relevant": true, "category": "product_service", "reason": "SMS"}'])
     assert check_relevance(fake, article).relevant is True
+
+
+def test_gate_bypass_sends_articles_without_keywords_to_the_model() -> None:
+    """D-012: narrow feeds rely on the model, not on the keyword list."""
+    article = Article(
+        url="https://example.com/narrow",
+        source_id="content-review",
+        title="Оператор запустил сервис коротких сообщений для бизнеса",
+        body="Подробности в материале.",
+        language="ru",
+    )
+    llm = _FakeLLM([json.dumps({"relevant": True, "category": "carrier", "reason": "messaging"})])
+
+    gated = check_relevance(llm, article)
+    assert gated.relevant is False and llm.calls == []
+
+    bypassed = check_relevance(llm, article, use_gate=False)
+    assert bypassed.relevant is True and bypassed.category == "carrier"
+    assert len(llm.calls) == 1

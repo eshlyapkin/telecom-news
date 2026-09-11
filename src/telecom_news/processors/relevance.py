@@ -186,20 +186,29 @@ def _coerce_bool(value: object) -> bool:
     raise LLMResponseError(f"cannot interpret 'relevant' flag: {value!r}")
 
 
-def check_relevance(client: LLMClient, article: Article) -> RelevanceResult:
-    """Classify whether the article belongs to the SMS/messaging ecosystem."""
-    if not has_messaging_signal(article):
-        return RelevanceResult(
-            relevant=False,
-            category=None,
-            reason="no explicit SMS/messaging signal in title or feed text",
-        )
-    if is_obviously_off_topic(article):
-        return RelevanceResult(
-            relevant=False,
-            category=None,
-            reason="obvious voice/video/email topic without an SMS/messaging link",
-        )
+def check_relevance(
+    client: LLMClient, article: Article, *, use_gate: bool = True
+) -> RelevanceResult:
+    """Classify whether the article belongs to the SMS/messaging ecosystem.
+
+    ``use_gate=False`` skips the deterministic keyword guard and sends the
+    article straight to the model. Narrow feeds whose item text is too thin for
+    the keyword list need that (DECISIONS.md D-012); broad vendor feeds keep the
+    guard so obvious voice/video/email material never costs an LLM call.
+    """
+    if use_gate:
+        if not has_messaging_signal(article):
+            return RelevanceResult(
+                relevant=False,
+                category=None,
+                reason="no explicit SMS/messaging signal in title or feed text",
+            )
+        if is_obviously_off_topic(article):
+            return RelevanceResult(
+                relevant=False,
+                category=None,
+                reason="obvious voice/video/email topic without an SMS/messaging link",
+            )
     content = client.chat(
         [
             {"role": "system", "content": RELEVANCE_SYSTEM_PROMPT},

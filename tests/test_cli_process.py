@@ -133,3 +133,79 @@ def test_response_error_marks_article_and_continues(tmp_path: Path, capsys) -> N
     assert counts["processed"] == 1
     assert counts["error"] == 1
     assert "marked 'error'" in capsys.readouterr().err
+
+
+def test_repeatedly_broken_article_does_not_starve_the_queue(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Regression for D-015: poison rows used to be requeued before every fresh article.
+
+    The old flow was: run -> recover(all error -> new) -> process(oldest 'new' only).
+    A few articles whose LLM replies are always malformed therefore occupied the whole
+    processing budget forever, and nothing new was ever processed or published.
+    """
+    from telecom_news import cli
+
+    def _recover(limit, max_attempts, db_path):
+        """`_cmd_recover` pointed at the temporary database."""
+        from telecom_news.storage.database import Database as _Db
+
+        database = _Db(db_path)
+        count = database.reset_errors(limit, max_attempts=max_attempts or None)
+        return 0 if count >= 0 else 1
+
+    path = tmp_path / "news.db"
+    db = Database(path)
+    for n in (1, 2, 3):
+        db.upsert_by_hash(
+            Article(
+                url=f"https://example.com/poison/{n}",
+                source_id="test",
+                title=f"SMS poison {n}",  # keyword so the pre-LLM gate lets it through
+                body="body",
+                content_hash=f"poison-{n}",
+            )
+        )
+    db.upsert_by_hash(
+        Article(
+            url="https://example.com/fresh",
+            source_id="test",
+            title="Fresh SMS news",
+            body="body",
+            content_hash="fresh",
+        )
+    )
+
+    class BrokenForPoison:
+        def ensure_model(self) -> str:
+            return "fake"
+
+        def chat(self, messages, **kwargs) -> str:
+            if "poison" in messages[1]["content"].lower():
+                return "no json here at all"
+            return (
+                '{"relevant": true, "category": "vendor", "reason": "sms",'
+                ' "summary": "Готовое саммари"}'
+            )
+
+    monkeypatch.setenv("TELECOM_NEWS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        cli,
+        "_cmd_recover",
+        lambda limit=None, max_attempts=3: _recover(limit, max_attempts, path),
+    )
+    real_process = cli._cmd_process
+    monkeypatch.setattr(cli, "_cmd_process", lambda limit: real_process(limit, db_path=path))
+    monkeypatch.setattr(cli, "_cmd_publish", lambda limit, dry: 0)
+    monkeypatch.setattr(cli, "_cmd_deliver", lambda limit, dry: 0)
+    monkeypatch.setattr(cli, "_cmd_collect", lambda source, limit: 0)
+    monkeypatch.setattr("telecom_news.llm.client.LLMClient", lambda **kwargs: BrokenForPoison())
+
+    for _ in range(4):
+        cli._cmd_run("test-source", 3, True)
+        capsys.readouterr()
+
+    statuses = db.count_by_status()
+    assert statuses["processed"] == 1, "the fresh article must reach 'processed'"
+    assert statuses["error"] == 3, "the three poison articles stay parked in 'error'"
+    assert statuses["new"] == 0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from telecom_news.config import SOURCES, Config, load_config
 
 
@@ -111,22 +113,79 @@ def test_d011_only_low_signal_feeds_ship_disabled() -> None:
     }
 
 
-def test_russian_sources_are_the_majority_of_the_registry() -> None:
+def test_russian_sources_stay_represented_after_the_catalog_import() -> None:
+    """2026-09-11: the verified research table added ~40 EN news feeds.
+
+    The registry is no longer RU-majority (20 ru of 63 sources), so instead of a
+    majority this pins the count and the curated ru feeds the project relies on.
+    """
     ru = [source for source in SOURCES.values() if source.language == "ru"]
-    assert len(ru) == 15
-    assert len(ru) * 2 >= len(SOURCES)
+    assert len(ru) == 20
+    for source_id in (
+        "cnews-telecom",
+        "cnews-corp",
+        "securitylab-news",
+        "anti-malware-news",
+        "habr-cellular-news",
+        "content-review",
+    ):
+        assert source_id in SOURCES
 
 
 def test_no_source_url_carries_tracking_parameters() -> None:
-    """Discovery notes came with utm_* junk; config must store clean endpoints."""
+    """Discovery notes came with utm_* junk; config must store clean endpoints.
+
+    Query strings that belong to the publisher's own feed URL are fine (Habr's
+    ``?fl=ru``, Alertify's ``?x=1`` from the verified research table) — tracking
+    junk is not.
+    """
+    tracking = ("utm_", "fbclid", "gclid", "yclid", "mc_cid", "mc_eid")
     for source_id, source in SOURCES.items():
-        assert "utm_" not in source.url, source_id
-        assert "?" not in source.url or source.url == (
-            "https://habr.com/ru/rss/hubs/cellular/news/?fl=ru"
-        ), source_id
+        for marker in tracking:
+            assert marker not in source.url, (source_id, marker)
 
 
 def test_source_ids_and_urls_are_unique() -> None:
     urls = [source.url for source in SOURCES.values()]
     assert len(urls) == len(set(urls))
     assert sorted(SOURCES) == sorted(source.id for source in SOURCES.values())
+
+
+def test_target_langs_default_and_env_override(monkeypatch) -> None:
+    monkeypatch.delenv("TELECOM_NEWS_TARGET_LANGS", raising=False)
+    monkeypatch.delenv("TELECOM_NEWS_TARGET_LANG", raising=False)
+    assert load_config().target_langs == ("ru",)
+    assert load_config().target_lang == "ru"
+
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,en")
+    config = load_config()
+    assert config.target_langs == ("ru", "en")
+    assert config.target_lang == "ru"
+
+    # A single-language variable keeps working (backwards compatibility).
+    monkeypatch.delenv("TELECOM_NEWS_TARGET_LANGS")
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANG", "en")
+    assert load_config().target_langs == ("en",)
+
+
+def test_unknown_target_language_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,de")
+    with pytest.raises(ValueError):
+        load_config()
+
+
+def test_channel_targets_follow_target_languages(monkeypatch) -> None:
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,en")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_EN", raising=False)
+    assert load_config().channel_chat_ids == (("ru", "-100"),)
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_EN", "-200")
+    assert load_config().channel_chat_ids == (("ru", "-100"), ("en", "-200"))
+
+
+def test_narrow_sources_allow_the_llm_gate(monkeypatch) -> None:
+    for source_id in ("content-review", "anti-malware-news", "securitylab-news"):
+        assert SOURCES[source_id].relevance_gate == "llm"
+    for source_id in ("sinch-blog", "twilio-blog", "cnews-telecom"):
+        assert SOURCES[source_id].relevance_gate == "strict"
