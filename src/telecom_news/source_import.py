@@ -378,7 +378,7 @@ operational status endpoints, которые не являются новост�
 python -m telecom_news sources import --csv sources.csv --dry-run
 python -m telecom_news sources import --csv sources.csv
 python -m telecom_news sources --kind all        # что получилось
-python -m telecom_news sources verify            # живая проверка эндпоинтов
+python -m telecom_news sources --verify            # живая проверка эндпоинтов
 ```
 
 Импорт читает все листы книги, классифицирует строки по колонке «Тип источника»

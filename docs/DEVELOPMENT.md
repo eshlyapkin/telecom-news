@@ -146,8 +146,8 @@ M8+: каталог источников (D-016):
 ```bash
 .venv/bin/python -m telecom_news sources                     # список каталога (news)
 .venv/bin/python -m telecom_news sources --kind all --json   # все эндпоинты, включая status
-.venv/bin/python -m telecom_news sources verify --verify-limit 10   # быстрая живая проверка
-.venv/bin/python -m telecom_news sources verify              # все 59 включённых лент (несколько минут)
+.venv/bin/python -m telecom_news sources --verify --verify-limit 10   # быстрая живая проверка
+.venv/bin/python -m telecom_news sources --verify              # все 59 включённых лент (несколько минут)
 .venv/bin/python -m telecom_news sources import --csv sheet.csv --dry-run
 .venv/bin/python -m telecom_news sources import --csv sheet.csv   # перезаписать sources_catalog.py
 ```
@@ -155,7 +155,7 @@ M8+: каталог источников (D-016):
 Реестр вырос до 63 источников (59 включённых), поэтому `doctor` и `run` теперь
 последовательно обходят 59 лент: таймаут каждой — 15 с, то есть при недоступной
 сети один прогон `doctor` может идти минуты. Для быстрой проверки после
-обновления сначала `sources verify --verify-limit 10`, и только потом полный
+обновления сначала `sources --verify --verify-limit 10`, и только потом полный
 `doctor`.
 
 Каталог — `src/telecom_news/sources_catalog.py`: `kind="news"` попадает в

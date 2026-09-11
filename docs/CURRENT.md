@@ -22,7 +22,7 @@ command results; anything else is marked NOT VERIFIED.
   отклонённых таблицей). Повторный импорт даёт тот же файл (идемпотентность).
 - Проверено: `pytest -q` → **218 passed**; `ruff check`,
   `ruff format --check`, `git diff --check` — чисто. **NOT VERIFIED:** живая
-  проверка новых лент (`sources verify` требует исходящей сети, у агента её
+  проверка новых лент (`sources --verify` требует исходящей сети, у агента её
   нет) и фактическая свежесть 40+ новых новостных фидов — это делается на
   машине пользователя.
 
@@ -243,7 +243,7 @@ outbound network (`curl` to any host fails), so they are NOT VERIFIED here.
 даёт недопустимый риск опечатки в рабочем конфиге, а агент не может проверить
 эндпоинты (нет исходящей сети). Путь: выгрузить таблицу в CSV и выполнить
 `sources import --csv sheet.csv --dry-run`, затем `sources import`,
-`sources --kind all`, `sources verify` (проверка всех лент на машине
+`sources --kind all`, `sources --verify` (проверка всех лент на машине
 пользователя), после чего посмотреть `git diff`.
 
 Проверено агентом 2026-09-11: **`pytest -q` → 214 passed** (было 195),
