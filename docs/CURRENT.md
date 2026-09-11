@@ -250,6 +250,36 @@ outbound network (`curl` to any host fails), so they are NOT VERIFIED here.
 `ruff check`/`ruff format --check` чисто, `git diff --check` чисто. Новый файл
 тестов — `tests/test_source_import.py` (14 тестов).
 
+## Session 2026-09-11 (late night): D-017/D-018 в master, D-019 в патче
+
+**D-017/D-018 смержены.** Пользователь применил b64-патч, прогнал тесты
+(**229 passed**), запушил ветку `d017-freshness-killswitch` и смержил PR #3 —
+squash-коммит `102a6bb` (14 файлов, +349/−23). В тот же коммит попал
+`.gitignore`-блок `data/backups/` и `data/pipeline.lock`: бэкап БД (в
+`deliveries`/`subscribers` есть chat_id) и lock-файл случайно ушли в git, их
+убрали из индекса. Позже пользователь добавил `data/*.lock` — под лок бота.
+
+**Правда про env-файл.** Строки в `~/.config/telecom-news/env` были дописаны без
+`export`, поэтому `scripts/run_pipeline.sh` (дочерний процесс) не видел ни
+`TELECOM_NEWS_LIMIT=30`, ни `LMSTUDIO_*`: прогон брал дефолтные 10 статей, а
+запуски из планировщика раньше получали отказы `localhost:1234`. После `sed`,
+добавившего `export`, лимит заработал — 9 прогонов подряд обрабатывали по 30
+статей с `exit_code=0`.
+
+**Состояние на машине пользователя (2026-09-11 21:10 UTC, `diagnose`):**
+published=48, new=88, skipped=599, error=0; последняя публикация 0.2 ч назад;
+LM Studio OK (`qwen3-vl-8b-instruct`), Telegram OK (`@sms_telecom_news_bot`).
+
+**D-019 (патч, ещё не в `master`).** Две правки: (1) `diagnose` больше не
+считает сбоями старые `last_error` у источников, выключенных
+`TELECOM_NEWS_DISABLED_SOURCES` (выключенная лента не опрашивается, поэтому
+запись остаётся навсегда и отчёт вечно печатал «4 of 55 … failed»); такие
+источники выводятся строкой `Disabled sources with stale errors (not counted)`.
+(2) `bot.describe_update()` + `logging.info` в `poll_once`: каждый апдейт
+печатает строку, `channel_post` помечается как игнорируемый — команда в канале
+не подписывает, подписка живёт в личке с ботом. Проверено в песочнице:
+**233 passed**, `ruff check`/`ruff format --check` чисто.
+
 ## Still open
 
 - Live run of `run` after D-011 — the published volume must be re-measured; the
@@ -263,6 +293,11 @@ outbound network (`curl` to any host fails), so they are NOT VERIFIED here.
 - M8: живой прогон бота и рассылки в Telegram не выполнялся; расширение списка
   источников (часть решения «и то, и другое») не начато — нужен подбор и проверка
   фидов с фокусом на SMS/messaging.
+- Бэклог на 2026-09-11 21:10 UTC — 88 статей `new`, дренаж по 30 за прогон
+  (нужно ~3 прогона); после этого `process` печатает «Nothing to process».
+- Бот живёт только пока запущен процесс `python -m telecom_news bot`
+  (сейчас — `nohup`; для рестарта после перезагрузки WSL нужен Task Scheduler
+  или systemd). `data/bot.lock` держит единственный экземпляр.
 - Обнаруженный при разборе риск (не исправлен): `run` перед обработкой выполняет
   `recover` без ограничения на **все** `error`-статьи, а `process` берёт самые старые
   `new` — если ≥`--limit` статей стабильно ломают ответ LLM, они возвращаются в начало

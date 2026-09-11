@@ -172,6 +172,10 @@ class Facts:
     oldest_processed_at: datetime | None = None
     enabled_sources: int = 0
     failing_sources: tuple[tuple[str, str], ...] = ()
+    # Sources switched off (TELECOM_NEWS_DISABLED_SOURCES) whose last error is
+    # still in source_health: they are never re-checked, so their stale rows are
+    # reported but not counted as failures (D-019).
+    ignored_sources: tuple[str, ...] = ()
     telegram_configured: bool = False
     log_path: Path | None = None
     log_modified_at: datetime | None = None
@@ -328,8 +332,8 @@ def analyze(facts: Facts) -> Report:
                 "backlog",
                 "info",
                 f"{waiting_new} article(s) are waiting for LLM processing{age_text}.",
-                "Each run processes at most --limit articles (10 in scripts/run_pipeline.sh), "
-                "so a large backlog drains gradually.",
+                "Each run processes at most --limit articles (scripts/run_pipeline.sh uses "
+                "TELECOM_NEWS_LIMIT, default 10), so a large backlog drains gradually.",
             )
         )
 
@@ -369,7 +373,8 @@ def analyze(facts: Facts) -> Report:
                 "warning",
                 f"{len(facts.failing_sources)} of {facts.enabled_sources} enabled source(s) "
                 f"failed their last check: {listed}.",
-                "One dead feed does not stop the pipeline; fix or disable it in config.SOURCES.",
+                "One dead feed does not stop the pipeline; fix it, or switch it off with "
+                "TELECOM_NEWS_DISABLED_SOURCES (docs/DEVELOPMENT.md).",
             )
         )
 
@@ -494,6 +499,12 @@ def render(report: Report, facts: Facts, *, show_runs: int = 5) -> str:
         lines.append("Articles: no database")
     if facts.failing_sources:
         lines.append(f"Failing sources: {len(facts.failing_sources)}/{facts.enabled_sources}")
+    if facts.ignored_sources:
+        listed = ", ".join(facts.ignored_sources[:4])
+        hidden = len(facts.ignored_sources) - 4
+        if hidden > 0:
+            listed += f" and {hidden} more"
+        lines.append(f"Disabled sources with stale errors (not counted): {listed}")
     if facts.parked_errors:
         lines.append(f"Parked errors (retries exhausted): {facts.parked_errors}")
     if facts.llm_ok is not None:
