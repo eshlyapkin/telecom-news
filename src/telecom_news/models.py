@@ -52,6 +52,9 @@ class Article:
     category: str | None = None  # technology/vendor/aggregator/...
     llm_result: dict[str, Any] | None = None
     published_at_telegram: datetime | None = None
+    # How many times processing this article failed. Bounded retries keep a
+    # permanently broken item from blocking the queue forever (D-015).
+    attempts: int = 0
 
     def __post_init__(self) -> None:
         if not self.content_hash:

@@ -19,6 +19,9 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+SUPPORTED_LANGS: tuple[str, ...] = ("ru", "en")
+
+
 @dataclass(frozen=True)
 class Config:
     """Runtime configuration. Defaults + env overrides, no side effects."""
@@ -29,7 +32,13 @@ class Config:
     log_level: str = "INFO"
     lmstudio_base_url: str = "http://localhost:1234/v1"
     lmstudio_model: str = ""  # empty = first model loaded in LM Studio
-    target_lang: str = "ru"  # publication language (ARCHITECTURE.md 3.9)
+    # Languages of the public channel(s). One post per language; the first entry
+    # is the primary one (it also fills llm_result.summary for compatibility).
+    target_langs: tuple[str, ...] = ("ru",)
+    channel_chat_ids: tuple[tuple[str, str], ...] = ()  # (lang, chat_id), filled from env
+    subscriber_max_age_hours: float = 24.0
+    subscriber_max_per_cycle: int = 10
+    subscriber_max_attempts: int = 3
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_min_interval: float = 0.1
@@ -54,9 +63,38 @@ class Config:
         lmstudio_model = os.environ.get("LMSTUDIO_MODEL")
         if lmstudio_model:
             object.__setattr__(self, "lmstudio_model", lmstudio_model)
-        target_lang = os.environ.get("TELECOM_NEWS_TARGET_LANG")
-        if target_lang:
-            object.__setattr__(self, "target_lang", target_lang.lower())
+        raw_langs = os.environ.get("TELECOM_NEWS_TARGET_LANGS")
+        if raw_langs is None:
+            raw_langs = os.environ.get("TELECOM_NEWS_TARGET_LANG") or "ru"
+        langs = tuple(
+            dict.fromkeys(part.strip().lower() for part in raw_langs.split(",") if part.strip())
+        )
+        unsupported = [lang for lang in langs if lang not in SUPPORTED_LANGS]
+        if not langs or unsupported:
+            raise ValueError(
+                f"unsupported publication language(s) {unsupported or raw_langs!r}; "
+                f"supported: {', '.join(SUPPORTED_LANGS)}"
+            )
+        object.__setattr__(self, "target_langs", langs)
+        channel_ids: list[tuple[str, str]] = []
+        default_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+        for index, lang in enumerate(langs):
+            specific = os.environ.get(f"TELEGRAM_CHAT_ID_{lang.upper()}", "")
+            chat_id = specific or (default_chat_id if index == 0 else "")
+            if chat_id:
+                channel_ids.append((lang, chat_id))
+        object.__setattr__(self, "channel_chat_ids", tuple(channel_ids))
+        for env_name, attribute in (
+            ("SUBSCRIBER_MAX_AGE_HOURS", "subscriber_max_age_hours"),
+            ("SUBSCRIBER_MAX_PER_CYCLE", "subscriber_max_per_cycle"),
+            ("SUBSCRIBER_MAX_ATTEMPTS", "subscriber_max_attempts"),
+        ):
+            value = os.environ.get(env_name)
+            if value:
+                try:
+                    object.__setattr__(self, attribute, max(0.0, float(value)))
+                except ValueError:
+                    pass
         object.__setattr__(self, "telegram_bot_token", os.environ.get("TELEGRAM_BOT_TOKEN", ""))
         object.__setattr__(self, "telegram_chat_id", os.environ.get("TELEGRAM_CHAT_ID", ""))
         interval = os.environ.get("TELEGRAM_MIN_INTERVAL")
@@ -65,6 +103,11 @@ class Config:
                 object.__setattr__(self, "telegram_min_interval", max(0.0, float(interval)))
             except ValueError:
                 pass
+
+    @property
+    def target_lang(self) -> str:
+        """Primary publication language (backwards-compatible accessor)."""
+        return self.target_langs[0]
 
     @property
     def logs_dir(self) -> Path:
@@ -88,6 +131,10 @@ class SourceConfig:
     url: str = ""
     language: str = "en"
     enabled: bool = True
+    # "strict" keeps the deterministic pre-LLM relevance guard (M6). "llm" lets
+    # the model decide for narrow sources whose feed text is too thin for the
+    # keyword guard (DECISIONS.md D-012).
+    relevance_gate: str = "strict"
 
 
 # First real source, chosen and verified in M1 (see DECISIONS.md D-007):
@@ -123,6 +170,10 @@ SOURCES: dict[str, SourceConfig] = {
         language="en",
         enabled=True,
     ),
+    # Messaging-focused feeds added 2026-09-11 (D-014) now live in
+    # `sources_catalog.CATALOG` together with the bulk import of the source
+    # research table (D-016): mef-news, mobilesquared, total-telecom,
+    # simpletexting, textmagic. Edit them there.
     # Russian telecom and digital communications feeds verified during M7
     # source discovery; all are structured RSS and do not require scraping.
     "content-review": SourceConfig(
@@ -131,6 +182,7 @@ SOURCES: dict[str, SourceConfig] = {
         url="https://content-review.com/feed.xml",
         language="ru",
         enabled=True,
+        relevance_gate="llm",  # D-012: narrow feed, let the model decide
     ),
     "iksmedia": SourceConfig(
         id="iksmedia",
@@ -197,6 +249,7 @@ SOURCES: dict[str, SourceConfig] = {
         url="https://www.securitylab.ru/_Services/Export/RSS/news/",
         language="ru",
         enabled=True,
+        relevance_gate="llm",  # D-012: narrow feed, let the model decide
     ),  # B+ — smishing/OTP fraud, telecom security; user verified
     "securitylab-analytics": SourceConfig(
         id="securitylab-analytics",
@@ -204,6 +257,7 @@ SOURCES: dict[str, SourceConfig] = {
         url="https://www.securitylab.ru/_Services/Export/RSS/analytics/",
         language="ru",
         enabled=True,
+        relevance_gate="llm",  # D-012: narrow feed, let the model decide
     ),  # B — anti-fraud/security analytics; user verified
     "securitylab-vulnerabilities": SourceConfig(
         id="securitylab-vulnerabilities",
@@ -219,6 +273,7 @@ SOURCES: dict[str, SourceConfig] = {
         url="https://www.anti-malware.ru/news/feed",
         language="ru",
         enabled=True,
+        relevance_gate="llm",  # D-012: narrow feed, let the model decide
     ),  # B+ — SMS-bombing, OTP fraud; agent verified (items of 2026-09-11)
     "anti-malware-analytics": SourceConfig(
         id="anti-malware-analytics",
@@ -226,6 +281,7 @@ SOURCES: dict[str, SourceConfig] = {
         url="https://www.anti-malware.ru/taxonomy/term/76/feed",
         language="ru",
         enabled=True,
+        relevance_gate="llm",  # D-012: narrow feed, let the model decide
     ),  # B — anti-fraud analytics; user verified
     "anti-malware-press": SourceConfig(
         id="anti-malware-press",
@@ -246,6 +302,43 @@ SOURCES: dict[str, SourceConfig] = {
     # after a live `collect --source nag-all` returns items (note: collect exits
     # 2 on a disabled source, so flip `enabled` for that test run).
 }
+
+
+def _catalog_news_sources() -> dict[str, SourceConfig]:
+    """News entries of the catalog (``sources_catalog.CATALOG``) as configs.
+
+    Status-page endpoints are deliberately excluded: they are JSON, not
+    editorial feeds, and ``collect`` cannot parse them (D-016).
+    """
+    from .sources_catalog import CATALOG, KIND_NEWS
+
+    return {
+        entry.id: SourceConfig(
+            id=entry.id,
+            type=SOURCE_TYPE_RSS,
+            url=entry.url,
+            language=entry.language,
+            enabled=entry.enabled,
+            relevance_gate=entry.gate,
+        )
+        for entry in CATALOG
+        if entry.kind == KIND_NEWS
+    }
+
+
+def _merge_catalog_sources() -> None:
+    """Add catalog entries to ``SOURCES``; a collision is a configuration error."""
+    catalog = _catalog_news_sources()
+    duplicates = sorted(set(SOURCES) & set(catalog))
+    if duplicates:
+        raise ValueError(
+            "source id declared both in SOURCES and in sources_catalog.CATALOG: "
+            + ", ".join(duplicates)
+        )
+    SOURCES.update(catalog)
+
+
+_merge_catalog_sources()
 
 
 def get_source(source_id: str) -> SourceConfig | None:

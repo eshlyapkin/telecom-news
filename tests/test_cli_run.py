@@ -35,6 +35,7 @@ def test_run_collects_all_enabled_sources(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_cmd_collect", lambda source, limit: calls.append(source) or 0)
     monkeypatch.setattr(cli, "_cmd_process", lambda limit: 0)
     monkeypatch.setattr(cli, "_cmd_publish", lambda limit, dry: 0)
+    monkeypatch.setattr(cli, "_cmd_deliver", lambda limit, dry: 0)
     monkeypatch.setattr(
         "telecom_news.config.SOURCES",
         {"a": Source("a"), "b": Source("b"), "off": Source("off", False)},
@@ -50,9 +51,10 @@ def test_run_still_publishes_existing_processed_articles_on_process_failure(monk
     monkeypatch.setattr(cli, "_cmd_collect", lambda source, limit: calls.append("collect") or 0)
     monkeypatch.setattr(cli, "_cmd_process", lambda limit: calls.append("process") or 1)
     monkeypatch.setattr(cli, "_cmd_publish", lambda limit, dry: calls.append("publish") or 0)
+    monkeypatch.setattr(cli, "_cmd_deliver", lambda limit, dry: calls.append("deliver") or 0)
 
     assert cli._cmd_run("test-source", None, False) == 1
-    assert calls == ["collect", "process", "publish"]
+    assert calls == ["collect", "process", "publish", "deliver"]
 
 
 def test_run_continues_after_collection_failure(monkeypatch) -> None:
@@ -61,6 +63,7 @@ def test_run_continues_after_collection_failure(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_cmd_collect", lambda source, limit: calls.append("collect") or 1)
     monkeypatch.setattr(cli, "_cmd_process", lambda limit: calls.append("process") or 0)
     monkeypatch.setattr(cli, "_cmd_publish", lambda limit, dry: calls.append("publish") or 0)
+    monkeypatch.setattr(cli, "_cmd_deliver", lambda limit, dry: calls.append("deliver") or 0)
 
     assert cli._cmd_run("test-source", None, False) == 1
-    assert calls == ["collect", "process", "publish"]
+    assert calls == ["collect", "process", "publish", "deliver"]

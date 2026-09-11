@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from telecom_news.config import SOURCES, Config, load_config
 
 
@@ -130,3 +132,43 @@ def test_source_ids_and_urls_are_unique() -> None:
     urls = [source.url for source in SOURCES.values()]
     assert len(urls) == len(set(urls))
     assert sorted(SOURCES) == sorted(source.id for source in SOURCES.values())
+
+
+def test_target_langs_default_and_env_override(monkeypatch) -> None:
+    monkeypatch.delenv("TELECOM_NEWS_TARGET_LANGS", raising=False)
+    monkeypatch.delenv("TELECOM_NEWS_TARGET_LANG", raising=False)
+    assert load_config().target_langs == ("ru",)
+    assert load_config().target_lang == "ru"
+
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,en")
+    config = load_config()
+    assert config.target_langs == ("ru", "en")
+    assert config.target_lang == "ru"
+
+    # A single-language variable keeps working (backwards compatibility).
+    monkeypatch.delenv("TELECOM_NEWS_TARGET_LANGS")
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANG", "en")
+    assert load_config().target_langs == ("en",)
+
+
+def test_unknown_target_language_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,de")
+    with pytest.raises(ValueError):
+        load_config()
+
+
+def test_channel_targets_follow_target_languages(monkeypatch) -> None:
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,en")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_EN", raising=False)
+    assert load_config().channel_chat_ids == (("ru", "-100"),)
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_EN", "-200")
+    assert load_config().channel_chat_ids == (("ru", "-100"), ("en", "-200"))
+
+
+def test_narrow_sources_allow_the_llm_gate(monkeypatch) -> None:
+    for source_id in ("content-review", "anti-malware-news", "securitylab-news"):
+        assert SOURCES[source_id].relevance_gate == "llm"
+    for source_id in ("sinch-blog", "twilio-blog", "cnews-telecom"):
+        assert SOURCES[source_id].relevance_gate == "strict"

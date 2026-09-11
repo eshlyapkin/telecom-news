@@ -145,6 +145,15 @@
 - **Зависимости:** CLI/pipeline; logging.
 - **НЕ делает:** distributed workers, очереди (non-goal).
 
+### 3.12a Subscriber bot и мультиязычная публикация (M8)
+
+- **Назначение:** хранение выбора языков пользователем, обработка команд бота и рассылка.
+- **Вход:** `getUpdates` (Bot API), таблицы `subscribers`, `subscriber_languages`, `deliveries`, `bot_state`.
+- **Выход:** сообщения в личку подписчикам — по одному на выбранный язык; состояние подписки в SQLite.
+- **Модули:** `bot.py` (`handle_update` — логика без сети, `poll_once`/`run_bot` — поллинг), `processors/renditions.py` (`ensure_rendition` — кэш текста на язык), `delivery/planner.py` (`plan_deliveries` — правила окна свежести, лимитов и ретраев), команды CLI `bot` и `deliver`.
+- **Идемпотентность:** ключ `(chat_id, article_id, lang)` в `deliveries`; повторный прогон не дублирует отправленное.
+- **НЕ делает:** не выбирает темы/категории, не переводит через внешние сервисы, не хранит учётные записи.
+
 ### 3.13 Logging (`logging.py` / stdlib `logging`)
 
 - **Назначение:** единый структурированный лог всех этапов.

@@ -212,3 +212,103 @@ def test_save_processing_result_rejects_bad_values(tmp_path: Path) -> None:
         db.save_processing_result(
             999, relevance="relevant", category=None, llm_result={}, status="processed"
         )
+
+
+def test_last_published_returns_newest_publication(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    assert db.last_published() is None
+
+    db.upsert_by_hash(_article(1))
+    db.upsert_by_hash(_article(2))
+    db.save_processing_result(
+        1, relevance="relevant", category="vendor", llm_result={}, status="processed"
+    )
+    db.save_processing_result(
+        2, relevance="relevant", category="vendor", llm_result={}, status="processed"
+    )
+    older = datetime(2026, 9, 10, 15, 0, 0, tzinfo=timezone.utc)
+    newer = datetime(2026, 9, 11, 12, 30, 0, tzinfo=timezone.utc)
+    assert db.mark_published(1, published_at=older) is True
+    assert db.mark_published(2, published_at=newer) is True
+
+    published = db.last_published()
+    assert published is not None
+    assert published.id == 2
+    assert published.published_at_telegram == newer
+
+
+def test_oldest_with_status_picks_lowest_id(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    assert db.oldest_with_status("new") is None
+
+    db.upsert_by_hash(_article(1))
+    db.upsert_by_hash(_article(2))
+    db.set_status(1, "skipped")
+
+    oldest = db.oldest_with_status("new")
+    assert oldest is not None and oldest.id == 2
+    assert db.oldest_with_status("skipped").id == 1  # type: ignore[union-attr]
+    with pytest.raises(ValueError):
+        db.oldest_with_status("nope")
+
+
+def test_mark_error_counts_attempts_and_reset_is_bounded(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1))
+    db.upsert_by_hash(_article(2))
+
+    assert db.mark_error(1) == 1
+    assert db.mark_error(1) == 2
+
+    # Article 2 is healthy: it must stay reachable while article 1 is parked.
+    assert db.reset_errors(max_attempts=2) == 0
+    assert db.parked_errors(max_attempts=2) == 1
+    assert db.mark_error(1) == 3
+    assert db.reset_errors(max_attempts=3) == 0
+    # A forced retry ignores the limit (manual recovery).
+    assert db.reset_errors(max_attempts=None) == 1
+    assert db.count_by_status()["new"] == 2
+
+
+def test_reset_errors_returns_only_retryable_articles(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1))
+    db.upsert_by_hash(_article(2))
+    db.upsert_by_hash(_article(3))
+    db.set_status(3, "processed")  # keeps the 'new' counter unambiguous
+    for _ in range(3):
+        db.mark_error(1)
+    db.mark_error(2)
+
+    assert db.reset_errors(max_attempts=3) == 1
+    assert db.count_by_status()["new"] == 1
+    assert db.count_by_status()["error"] == 1  # only the parked article
+    # Nothing retryable left, and the limit is respected for a new failure.
+    assert db.reset_errors(max_attempts=3, limit=5) == 0
+    db.mark_error(3)
+    assert db.reset_errors(max_attempts=3, limit=1) == 1
+
+
+def test_existing_database_gets_attempts_column(tmp_path: Path) -> None:
+    """A database created before D-015 (no attempts column) is migrated in place."""
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        "CREATE TABLE articles (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL UNIQUE,"
+        " content_hash TEXT NOT NULL UNIQUE, source_id TEXT, source_url TEXT, title TEXT,"
+        " summary_raw TEXT, body TEXT, language TEXT, published_at TEXT, fetched_at TEXT,"
+        " status TEXT NOT NULL DEFAULT 'new', relevance TEXT, category TEXT, llm_result TEXT,"
+        " published_at_telegram TEXT);"
+        "INSERT INTO articles (url, content_hash, title, status)"
+        " VALUES ('https://example.com/old', 'hash-old', 'Old', 'error');"
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = Database(path)
+    assert db.count_by_status()["error"] == 1
+    assert db.mark_error(1) == 1
+    assert db.reset_errors(max_attempts=2) == 1
+    assert db.get_unprocessed()[0].attempts == 1
