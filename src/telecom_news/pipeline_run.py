@@ -203,13 +203,28 @@ def _default_runner(
             max_per_subscriber=None,
         )
     if stage == "collect":
-        failed = False
+        # One broken RSS must not paint the whole run-now red.
+        attempted = 0
+        failed_ids: list[str] = []
         for source in SOURCES.values():
             if not source.enabled:
                 continue
+            attempted += 1
             if _cmd_collect(source.id, limit) != 0:
-                failed = True
-        return 1 if failed else 0
+                failed_ids.append(source.id)
+        if failed_ids:
+            import sys
+
+            print(
+                f"warning: collect finished with {len(failed_ids)}/{attempted} "
+                f"source failure(s): {', '.join(failed_ids)}",
+                file=sys.stderr,
+            )
+        if attempted == 0:
+            return 0
+        if len(failed_ids) == attempted:
+            return 1
+        return 0
     if stage == "process":
         return _cmd_process(limit)
     if stage == "publish":
