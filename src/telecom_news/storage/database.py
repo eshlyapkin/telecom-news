@@ -125,9 +125,28 @@ def _text_to_dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Aware UTC copy of ``value``; a naive timestamp is read as UTC."""
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
+
+
 def _validate_status(status: str) -> None:
     if status not in STATUSES:
         raise ValueError(f"unknown status {status!r}; expected one of {', '.join(STATUSES)}")
+
+
+# Age of an article for every freshness window (D-020): its own publication
+# date first, then the moment we posted it, then the collection time. One
+# expression is shared by `publish`, `deliver` and `diagnose` so they cannot
+# disagree about what "too old" means, and it mirrors
+# `delivery.planner.article_moment`. A row where all three are NULL has no known
+# age and is never treated as stale — a missing date is not proof of old age
+# (the same rule as the collect-time guard, D-017).
+FRESHNESS_SQL = "COALESCE(published_at, published_at_telegram, fetched_at)"
 
 
 def _row_to_article(row: sqlite3.Row) -> Article:
@@ -530,23 +549,86 @@ class Database:
         since: datetime | None = None,
         limit: int | None = None,
     ) -> list[Article]:
-        """Articles in the given statuses, newest id last (fan-out candidates)."""
+        """Articles in the given statuses, newest id last (fan-out candidates).
+
+        ``since`` filters on :data:`FRESHNESS_SQL`. Rows without any timestamp
+        are kept: they have no known age, and dropping them would silently hide
+        articles from feeds that publish no date (D-020).
+
+        The condition is appended to the WHERE clause, not to the finished
+        query: the previous ``"... ORDER BY id" + " AND ... >= ?"`` produced
+        ``ORDER BY id AND <expr>``, which SQLite happily accepts as a sort
+        expression — so the window was silently not applied at all.
+        """
         for status in statuses:
             _validate_status(status)
-        query = (
-            "SELECT * FROM articles WHERE status IN ("
-            + ",".join("?" for _ in statuses)
-            + ") ORDER BY id"
-        )
+        conditions = ["status IN (" + ",".join("?" for _ in statuses) + ")"]
         params: list[Any] = list(statuses)
         if since is not None:
-            query += " AND COALESCE(published_at_telegram, fetched_at, published_at) >= ?"
+            conditions.append(f"({FRESHNESS_SQL} IS NULL OR {FRESHNESS_SQL} >= ?)")
             params.append(_dt_to_text(since))
+        query = "SELECT * FROM articles WHERE " + " AND ".join(conditions) + " ORDER BY id"
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
         with self._connect() as conn:
             return [_row_to_article(row) for row in conn.execute(query, params)]
+
+    def count_stale(self, *, status: str, cutoff: datetime) -> int:
+        """Articles in ``status`` that are older than ``cutoff`` (no age = not stale).
+
+        Read-only helper for `publish` and `diagnose` (D-020): it counts the rows
+        a freshness window holds back, so they are reported instead of silently
+        staying in the queue forever.
+        """
+        _validate_status(status)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM articles WHERE status = ? "
+                f"AND {FRESHNESS_SQL} IS NOT NULL AND {FRESHNESS_SQL} < ?",
+                (status, _dt_to_text(cutoff)),
+            ).fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    def stale_articles(self, *, status: str = "new", cutoff: datetime) -> list[Article]:
+        """Articles in ``status`` whose own publication date is before ``cutoff``.
+
+        Used by `prune` (D-020) to clear the backlog collected before the
+        collect-time freshness guard existed. Only ``published_at`` counts: these
+        rows were never posted, and a missing date is not proof of old age. The
+        comparison happens on parsed datetimes (naive values are read as UTC),
+        not on ISO text: this selects rows for deletion.
+        """
+        _validate_status(status)
+        limit_moment = _as_utc(cutoff)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM articles WHERE status = ? AND published_at IS NOT NULL ORDER BY id",
+                (status,),
+            ).fetchall()
+        articles = [_row_to_article(row) for row in rows]
+        return [
+            article
+            for article in articles
+            if article.published_at is not None and _as_utc(article.published_at) < limit_moment
+        ]
+
+    def delete_articles(self, article_ids: list[int] | tuple[int, ...]) -> int:
+        """Delete articles and their renditions/delivery records. Returns the count.
+
+        Only `prune` calls this, and only for rows that never reached the model,
+        so no rendition or delivery normally exists; they are removed anyway to
+        avoid orphaned rows.
+        """
+        ids = [int(article_id) for article_id in article_ids]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as conn:
+            conn.execute(f"DELETE FROM renditions WHERE article_id IN ({placeholders})", ids)
+            conn.execute(f"DELETE FROM deliveries WHERE article_id IN ({placeholders})", ids)
+            cursor = conn.execute(f"DELETE FROM articles WHERE id IN ({placeholders})", ids)
+            return cursor.rowcount
 
     # --- bot state (M8) ---------------------------------------------------
 

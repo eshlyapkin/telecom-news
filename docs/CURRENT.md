@@ -280,8 +280,65 @@ LM Studio OK (`qwen3-vl-8b-instruct`), Telegram OK (`@sms_telecom_news_bot`).
 не подписывает, подписка живёт в личке с ботом. Проверено в песочнице:
 **233 passed**, `ruff check`/`ruff format --check` чисто.
 
+## Session 2026-09-12: D-020 — лимиты рассылки, окно свежести `publish`, `prune`
+
+**Отправная точка — реальный вывод команд пользователя** (бот перезапущен и
+логирует апдейты, PR #4 смержен, `master` = `d7d591e`, `deliver --dry-run`
+запланировал 10 сообщений подписчику `1288967298`). Разбор этого вывода и кода
+дал четыре дефекта, все закрыты одним решением D-020:
+
+1. **Флуд.** `scripts/run_pipeline.sh` зовёт `run --limit ${TELECOM_NEWS_LIMIT:-10}`,
+   в env пользователя `TELECOM_NEWS_LIMIT=30`, а `_cmd_run` передавал это число
+   дальше в `publish` (лимит постов) и в `deliver` (заменял
+   `SUBSCRIBER_MAX_PER_CYCLE`). Один 15-минутный цикл мог отправить до 30 постов
+   в канал и до 30 личных сообщений подписчику — хотя `deliver --dry-run` с
+   дефолтами показывал 10. Теперь `--limit` budgets только `collect`/`process`;
+   лимиты рассылки — `PUBLISH_MAX_PER_CYCLE` (10) и `SUBSCRIBER_MAX_PER_CYCLE`
+   (10), разово `run --max-posts` / `run --max-per-subscriber`.
+2. **У `publish` не было окна свежести**, а кандидаты сортируются по возрастанию
+   `id` — публикация начинала с самых старых строк. Добавлено
+   `PUBLISH_MAX_AGE_HOURS` (48, `0` = без окна) + `publish --max-age-hours`;
+   удержанные статьи печатаются явной строкой и остаются `processed`.
+3. **`recent_articles` никогда не применял `since` в SQL**: условие дописывалось
+   после `ORDER BY id`, получалось `ORDER BY id AND COALESCE(...) >= ?` — SQLite
+   принимает это как выражение сортировки. Для `deliver` окно компенсировал
+   `planner`, для `publish` не компенсировало ничего. Найден при написании
+   теста, исправлен; возраст теперь определяется одним выражением
+   `FRESHNESS_SQL = COALESCE(published_at, published_at_telegram, fetched_at)`,
+   одинаково в SQL и в `planner.article_moment` (дата публикации важнее даты
+   сбора: лента, отдавшая запись 2021 года сегодня, — это старые новости).
+   Строки без единой даты не отсекаются: отсутствие даты не доказательство
+   возраста (правило D-017).
+4. **Старую очередь было нечем почистить**: порог D-017 работает только на входе
+   в `collect`, а 215 из 517 `new`-строк пользователя были старше 30 дней и
+   сортировались первыми. Добавлена команда `prune [--max-age-days N]
+   [--dry-run]`: удаляет только `new` с известной датой публикации (плюс их
+   `renditions`/`deliveries`), `skipped`/`published` не трогает. Вернуться строки
+   не могут — `collect` отбросит их снова.
+
+`diagnose` теперь различает «старое, поэтому не публикуется» и «публикация
+сломана»: `stale-processed` и `stale-queue` — предупреждения с подсказками
+(`PUBLISH_MAX_AGE_HOURS`, `prune --max-age-days N --dry-run`), а блокирующий
+`stuck-processed` считается только по свежим `processed`-строкам.
+
+Проверено агентом 2026-09-12 в песочнице: **`pytest -q` → 265 passed** (было
+233), `ruff check` и `ruff format --check` чисто, `git diff --check` чисто,
+`telecom_news --help`/`prune --help`/`run --help` и `prune --dry-run` на пустой
+БД работают. **NOT VERIFIED:** живой прогон на машине пользователя (реальные
+`publish`/`deliver`/`prune` против `data/news.db` и Telegram).
+
+**Что осталось непонятным по выводу пользователя (нужна его машина):** в логе бота
+`/start` и кнопка языка приходят из чата `555001`, а в `subscribers` одна строка
+`1288967298` с `username='sms_telecom_news_bot'` (ник самого бота, не
+пользователя). Похоже на строку, созданную не живым `/start` (демо-апдейты
+1001–1003 или ручная вставка). Пока это не проверено, рассылка может идти не в
+тот чат.
+
 ## Still open
 
+- **Проверить подписчика и сделать первую реальную рассылку** (на машине
+  пользователя): `/start` в личке с ботом → строка в `subscribers` с реальным
+  `chat_id` → `deliver --limit 2`. NOT VERIFIED.
 - Live run of `run` after D-011 — the published volume must be re-measured; the
   earlier figure (23 published, 29 skipped, 0 error) predates this change and
   came from RU feeds that were being skipped. NOT VERIFIED.
@@ -295,14 +352,26 @@ LM Studio OK (`qwen3-vl-8b-instruct`), Telegram OK (`@sms_telecom_news_bot`).
   фидов с фокусом на SMS/messaging.
 - Бэклог на 2026-09-11 21:10 UTC — 88 статей `new`, дренаж по 30 за прогон
   (нужно ~3 прогона); после этого `process` печатает «Nothing to process».
+  Сколько из них старше 30 дней — покажет `prune --dry-run` (D-020): такие
+  строки сортируются первыми и съедают бюджет обработки каждого прогона.
 - Бот живёт только пока запущен процесс `python -m telecom_news bot`
   (сейчас — `nohup`; для рестарта после перезагрузки WSL нужен Task Scheduler
   или systemd). `data/bot.lock` держит единственный экземпляр.
-- Обнаруженный при разборе риск (не исправлен): `run` перед обработкой выполняет
-  `recover` без ограничения на **все** `error`-статьи, а `process` берёт самые старые
-  `new` — если ≥`--limit` статей стабильно ломают ответ LLM, они возвращаются в начало
-  очереди каждый прогон и новые статьи до модели не доходят. `diagnose` покажет это как
-  повторяющиеся ошибки в логах.
+- ~~Риск «`recover` возвращает все `error`-статьи и блокирует очередь»~~ — закрыт
+  D-015 (счётчик `attempts`, `recover --max-attempts`, `Parked errors` в
+  `diagnose`); пункт оставался в этом списке по ошибке.
+- **Качество текста поста (найдено в `deliver --dry-run` пользователя, не
+  исправлено):** статьи 214 и 219 идут ru-подписчику с английским саммари —
+  `renditions._script_mismatch()` только логирует warning и сохраняет рендер,
+  ретрая нет. Заголовки не переводятся никогда (`format_post` берёт
+  `article.title`), поэтому пост выглядит как «английский заголовок + русский
+  текст». Категория печатается сырым слагом («Категория: product_service»).
+- **Ссылка «Источник» может вести на картинку:** у статьи 55 в dry-run
+  `url = https://i.content-review.com/…jpg`. `parse_feed` берёт `entry.link` как
+  есть, sanity-проверки URL нет. Сколько таких строк — покажет запрос к БД
+  пользователя (`select id, source_id, url from articles where url like '%.jpg'`).
+- **Нет CI:** `.github/` отсутствует, тесты и ruff запускаются только локально
+  (или в песочнице агента).
 - `doctor` against live dependencies (LM Studio, Telegram, real feeds) — mock
   coverage only.
 - Interrupted-run recovery required by M7 (kill mid-run, rerun without duplicates

@@ -321,3 +321,92 @@ def test_existing_database_gets_attempts_column(tmp_path: Path) -> None:
     assert db.reset_errors(max_attempts=None) == 1
     assert db.mark_error(1) == 1  # 0 after the manual reset, 1 after this failure
     assert db.reset_errors(max_attempts=2) == 1
+
+
+# --- freshness windows and pruning (D-020) ----------------------------------
+
+
+def test_recent_articles_keeps_rows_without_any_timestamp(tmp_path: Path) -> None:
+    """An undated article has no known age, so a window must not hide it."""
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1, published_at=None, fetched_at=None))
+    db.set_status(1, "processed")
+
+    recent = db.recent_articles(since=datetime(2026, 9, 9, tzinfo=timezone.utc))
+
+    assert [article.id for article in recent] == [1]
+
+
+def test_recent_articles_uses_the_publication_date_not_the_collection_time(tmp_path: Path) -> None:
+    """A 2021 entry fetched today is old news: `published_at` wins over `fetched_at`."""
+    db = _db(tmp_path)
+    db.upsert_by_hash(
+        _article(
+            1,
+            published_at=datetime(2021, 5, 1, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 9, 10, 12, tzinfo=timezone.utc),
+        )
+    )
+    db.set_status(1, "processed")
+    db.upsert_by_hash(
+        _article(
+            2,
+            published_at=datetime(2026, 9, 10, 9, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 9, 10, 12, tzinfo=timezone.utc),
+        )
+    )
+    db.set_status(2, "processed")
+
+    recent = db.recent_articles(since=datetime(2026, 9, 9, tzinfo=timezone.utc))
+
+    assert [article.id for article in recent] == [2]
+
+
+def test_count_stale_reports_rows_a_window_holds_back(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1, published_at=datetime(2021, 5, 1, tzinfo=timezone.utc)))
+    db.set_status(1, "processed")
+    db.upsert_by_hash(_article(2, published_at=datetime(2026, 9, 10, tzinfo=timezone.utc)))
+    db.set_status(2, "processed")
+    db.upsert_by_hash(_article(3, published_at=None, fetched_at=None))
+    db.set_status(3, "processed")
+
+    assert db.count_stale(status="processed", cutoff=datetime(2026, 9, 9, tzinfo=timezone.utc)) == 1
+
+
+def test_stale_articles_selects_only_dated_rows_of_the_given_status(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    old = datetime(2021, 5, 1, tzinfo=timezone.utc)
+    db.upsert_by_hash(_article(1, published_at=old))  # new, old -> prunable
+    db.upsert_by_hash(_article(2, published_at=old))
+    db.set_status(2, "skipped")  # deduplication memory: never pruned
+    db.upsert_by_hash(_article(3, published_at=None))  # undated: kept
+    db.upsert_by_hash(_article(4, published_at=datetime(2026, 9, 10, tzinfo=timezone.utc)))
+
+    stale = db.stale_articles(status="new", cutoff=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert [article.id for article in stale] == [1]
+
+
+def test_stale_articles_reads_a_naive_timestamp_as_utc(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1, published_at=datetime(2021, 5, 1, 12, 0, 0)))
+
+    stale = db.stale_articles(status="new", cutoff=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    assert [article.id for article in stale] == [1]
+
+
+def test_delete_articles_removes_renditions_and_deliveries(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_by_hash(_article(1))
+    db.upsert_by_hash(_article(2))
+    db.save_rendition(1, "ru", title="Title 1", summary="саммари")
+    db.upsert_subscriber("100", username="tester")
+    db.record_delivery("100", 1, "ru", status="sent", message_id=7)
+
+    assert db.delete_articles([1]) == 1
+    assert db.count_by_status()["new"] == 1
+    assert db.get_rendition(1, "ru") is None
+    assert db.sent_deliveries() == set()
+    assert db.delete_articles([]) == 0

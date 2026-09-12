@@ -186,6 +186,14 @@ class Facts:
     telegram_detail: str = ""
     # Error articles that exhausted their retries and stay parked (D-015).
     parked_errors: int = 0
+    # Rows a freshness window holds back (D-020): queued articles older than the
+    # collect-time threshold (`prune` clears them) and processed articles too old
+    # to be posted by `publish`. They are reported instead of being read as
+    # "the publish stage is broken".
+    stale_queue: int = 0
+    stale_processed: int = 0
+    queue_max_age_days: int = 30
+    publish_max_age_hours: float = 48.0
     stale_run_minutes: float = 45.0
     quiet_hours: float = 6.0
 
@@ -310,17 +318,46 @@ def analyze(facts: Facts) -> Report:
         )
 
     # 3. Queue states: where exactly did the pipeline stop?
-    if waiting_processed:
+    # Rows held back by the publication freshness window are not a failure of the
+    # publish stage: they are intentionally not posted (D-020). Only the rest is
+    # "processed but not published" evidence.
+    stuck_processed = max(0, waiting_processed - max(0, facts.stale_processed))
+    if stuck_processed:
         age = _hours_since(facts, facts.oldest_processed_at)
         age_text = f" (oldest {age:.1f} h old)" if age is not None else ""
         findings.append(
             Finding(
                 "stuck-processed",
                 "blocking",
-                f"{waiting_processed} article(s) are processed but not published{age_text}.",
+                f"{stuck_processed} article(s) are processed but not published{age_text}.",
                 "The publish stage fails for these rows: read the error lines of the last "
                 "runs below, then check the token, chat_id and network access to "
                 "api.telegram.org.",
+            )
+        )
+    if facts.stale_processed:
+        findings.append(
+            Finding(
+                "stale-processed",
+                "warning",
+                f"{facts.stale_processed} processed article(s) are older than "
+                f"{facts.publish_max_age_hours:g} h and are not posted (PUBLISH_MAX_AGE_HOURS).",
+                "They stay 'processed' on purpose: posting year-old items as news is worse "
+                "than not posting them. Raise PUBLISH_MAX_AGE_HOURS (0 = no window) or run "
+                "'publish --max-age-hours 0' once if they should still go out.",
+            )
+        )
+    if facts.stale_queue:
+        findings.append(
+            Finding(
+                "stale-queue",
+                "warning",
+                f"{facts.stale_queue} queued article(s) are older than "
+                f"{facts.queue_max_age_days} day(s) and will be processed before fresh ones.",
+                "They were stored before the collect-time freshness guard existed (D-017) and "
+                "'process' takes the oldest rows first, so they eat the LLM budget of every "
+                f"run. Clear them with 'prune --max-age-days {facts.queue_max_age_days} "
+                "--dry-run' and then without --dry-run.",
             )
         )
 
@@ -448,6 +485,8 @@ _VERDICT_PRIORITY = (
     "quiet-channel",
     "never-published",
     "parked-errors",
+    "stale-processed",
+    "stale-queue",
     "recent-errors",
     "sources-failing",
     "backlog",
@@ -507,6 +546,15 @@ def render(report: Report, facts: Facts, *, show_runs: int = 5) -> str:
         lines.append(f"Disabled sources with stale errors (not counted): {listed}")
     if facts.parked_errors:
         lines.append(f"Parked errors (retries exhausted): {facts.parked_errors}")
+    if facts.stale_queue:
+        lines.append(
+            f"Queued but older than {facts.queue_max_age_days} day(s): {facts.stale_queue} (prune)"
+        )
+    if facts.stale_processed:
+        lines.append(
+            f"Processed but older than {facts.publish_max_age_hours:g} h: "
+            f"{facts.stale_processed} (not posted)"
+        )
     if facts.llm_ok is not None:
         lines.append(f"LM Studio: {'OK' if facts.llm_ok else 'FAIL'} — {facts.llm_detail}")
     if facts.telegram_ok is not None:

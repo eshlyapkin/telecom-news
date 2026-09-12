@@ -39,6 +39,13 @@ class Config:
     subscriber_max_age_hours: float = 24.0
     subscriber_max_per_cycle: int = 10
     subscriber_max_attempts: int = 3
+    # Channel caps (D-020). They are independent of `run --limit`, which budgets
+    # collect/process: one flag must not turn into 30 channel posts and 30
+    # private messages per subscriber in a single 15-minute cycle.
+    # `publish_max_per_cycle=0` removes the cap, `publish_max_age_hours=0`
+    # publishes processed articles however old they are.
+    publish_max_per_cycle: int = 10
+    publish_max_age_hours: float = 48.0
     # Articles older than this are not stored by collect/run: dormant feeds must
     # not push year-old news into the channel (D-017). 0 disables the guard.
     article_max_age_days: int = 30
@@ -87,15 +94,17 @@ class Config:
             if chat_id:
                 channel_ids.append((lang, chat_id))
         object.__setattr__(self, "channel_chat_ids", tuple(channel_ids))
-        for env_name, attribute in (
-            ("SUBSCRIBER_MAX_AGE_HOURS", "subscriber_max_age_hours"),
-            ("SUBSCRIBER_MAX_PER_CYCLE", "subscriber_max_per_cycle"),
-            ("SUBSCRIBER_MAX_ATTEMPTS", "subscriber_max_attempts"),
+        for env_name, attribute, convert in (
+            ("SUBSCRIBER_MAX_AGE_HOURS", "subscriber_max_age_hours", float),
+            ("SUBSCRIBER_MAX_PER_CYCLE", "subscriber_max_per_cycle", int),
+            ("SUBSCRIBER_MAX_ATTEMPTS", "subscriber_max_attempts", int),
+            ("PUBLISH_MAX_PER_CYCLE", "publish_max_per_cycle", int),
+            ("PUBLISH_MAX_AGE_HOURS", "publish_max_age_hours", float),
         ):
             value = os.environ.get(env_name)
             if value:
                 try:
-                    object.__setattr__(self, attribute, max(0.0, float(value)))
+                    object.__setattr__(self, attribute, max(0, convert(float(value))))
                 except ValueError:
                     pass
         max_age = os.environ.get("TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS")

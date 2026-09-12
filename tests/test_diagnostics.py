@@ -318,3 +318,58 @@ def test_disabled_sources_with_stale_errors_are_listed_but_not_counted() -> None
     assert report.blocking is False
     assert "Failing sources" not in text
     assert "Disabled sources with stale errors (not counted): commlawblog, iksmedia" in text
+
+
+def test_stale_queue_is_reported_with_a_prune_hint() -> None:
+    """D-020: rows stored before the collect-time guard eat every LLM budget."""
+    facts = _facts(
+        counts={"published": 20, "processed": 0, "new": 88, "skipped": 5, "error": 0},
+        oldest_new_at=NOW - timedelta(hours=40),
+        stale_queue=215,
+        queue_max_age_days=30,
+    )
+
+    report = analyze(facts)
+    text = render(report, facts)
+
+    finding = next(item for item in report.findings if item.code == "stale-queue")
+    assert finding.severity == "warning"
+    assert "215 queued article(s)" in finding.message
+    assert "prune --max-age-days 30" in finding.hint
+    assert report.blocking is False
+    assert "Queued but older than 30 day(s): 215 (prune)" in text
+
+
+def test_processed_rows_held_back_by_the_publication_window_are_not_blocking() -> None:
+    """D-020: an intentionally unpublished old article is not a broken publish stage."""
+    facts = _facts(
+        counts={"published": 20, "processed": 4, "new": 0, "skipped": 5, "error": 0},
+        oldest_processed_at=NOW - timedelta(hours=100),
+        stale_processed=4,
+        publish_max_age_hours=48.0,
+    )
+
+    report = analyze(facts)
+    text = render(report, facts)
+
+    assert report.blocking is False
+    assert not any(item.code == "stuck-processed" for item in report.findings)
+    held = next(item for item in report.findings if item.code == "stale-processed")
+    assert held.severity == "warning"
+    assert "4 processed article(s) are older than 48 h" in held.message
+    assert "Processed but older than 48 h: 4 (not posted)" in text
+
+
+def test_fresh_processed_rows_are_still_blocking_when_stale_ones_exist() -> None:
+    facts = _facts(
+        counts={"published": 20, "processed": 6, "new": 0, "skipped": 5, "error": 0},
+        oldest_processed_at=NOW - timedelta(hours=2),
+        stale_processed=4,
+    )
+
+    report = analyze(facts)
+
+    stuck = next(item for item in report.findings if item.code == "stuck-processed")
+    assert stuck.severity == "blocking"
+    assert "2 article(s) are processed but not published" in stuck.message
+    assert report.blocking is True
