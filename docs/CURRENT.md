@@ -3,6 +3,21 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-12 (prod MVP): merge checklist + bot/subscriber holes
+
+Goal ① — production MVP for the **news engine** (not full GUI §§40–70).
+
+Code holes fixed (only what ops already hit):
+
+- `bot.lock` stores PID; stale empty/dead-PID lock is removed on `bot` start
+- `diagnose` reports Bot running/stale lock, active subscribers, suspicious
+  username matching the bot nick (`sms_telecom_news_bot` pattern)
+- `Database.list_subscribers()` for ops
+- Runbook: `docs/SKILLS/prod-mvp-checklist.md`
+
+Operator still must: merge/pull, `/start` in private chat, confirm scheduler +
+bot after reboot. Channel quietness from relevance filter is **not** a publish bug.
+
 ## Session 2026-09-12 (later): M9a multi-project foundation (S1+S2 + code)
 
 Operator brief §§40–70 accepted as **vision** (not full build-out). Delivered:

@@ -570,11 +570,13 @@ def _cmd_diagnose(
     from .diagnostics import (
         Facts,
         analyze,
+        inspect_bot_lock,
         parse_pipeline_log,
         probe_llm,
         probe_telegram,
         render,
         report_json,
+        summarize_subscribers,
     )
     from .storage.database import Database
 
@@ -594,6 +596,9 @@ def _cmd_diagnose(
     oldest_new_at = None
     oldest_processed_at = None
     health: list[dict] = []
+    active_subscribers = 0
+    subscribers_without_lang = 0
+    suspicious_subscribers: tuple[str, ...] = ()
     db_exists = path.exists()
     if db_exists:
         try:
@@ -627,9 +632,17 @@ def _cmd_diagnose(
                     cutoff=moment - timedelta(hours=config.publish_max_age_hours),
                 )
             health = db.source_health()
+            active_subscribers, subscribers_without_lang, suspicious_subscribers = (
+                summarize_subscribers(
+                    db.list_subscribers(),
+                    db.subscribers_with_languages(status="active"),
+                )
+            )
         except (sqlite3.Error, OSError) as exc:
             print(f"warning: cannot read the database: {exc}", file=sys.stderr)
             db_exists = False
+
+    bot_running, bot_lock_stale, bot_detail = inspect_bot_lock(config.data_dir / "bot.lock")
     # A disabled source is never checked again, so its last error row would stay
     # in source_health forever and make diagnose warn about a feed that is
     # already switched off (D-019). Count only enabled sources; list the rest.
@@ -691,6 +704,12 @@ def _cmd_diagnose(
         llm_detail=llm_detail,
         telegram_ok=telegram_ok,
         telegram_detail=telegram_detail,
+        active_subscribers=active_subscribers,
+        subscribers_without_lang=subscribers_without_lang,
+        suspicious_subscribers=suspicious_subscribers,
+        bot_running=bot_running,
+        bot_lock_stale=bot_lock_stale,
+        bot_detail=bot_detail,
     )
     report = analyze(facts)
     print(report_json(report) if as_json else render(report, facts, show_runs=runs))
@@ -1167,6 +1186,8 @@ def _cmd_bot(once: bool = False, poll_timeout: int = 25, db_path: Path | None = 
     lock file is held. ``--once`` performs one ``getUpdates`` round and is useful
     from a scheduler when a long-lived process is not available.
     """
+    import os
+
     from .bot import poll_once, run_bot
     from .config import load_config
     from .delivery.telegram import TelegramClient, TelegramError
@@ -1178,19 +1199,39 @@ def _cmd_bot(once: bool = False, poll_timeout: int = 25, db_path: Path | None = 
         return 2
     db = Database(db_path or config.db_path)
     client = TelegramClient(config.telegram_bot_token, min_interval=config.telegram_min_interval)
+    lock_path = config.data_dir / "bot.lock"
     lock_file = None
     try:
         import fcntl
 
+        from .diagnostics import inspect_bot_lock
+
         config.data_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = open(config.data_dir / "bot.lock", "w")  # noqa: SIM115 - held for the run
+        # If a previous bot crashed and left an empty/stale lock, clear it so a
+        # fresh start is not blocked forever (prod MVP: observed on operator host).
+        running, stale, detail = inspect_bot_lock(lock_path)
+        if stale:
+            try:
+                lock_path.unlink(missing_ok=True)
+                print(f"Removed stale bot.lock ({detail}).", flush=True)
+            except OSError as exc:
+                print(f"warning: cannot remove stale bot.lock: {exc}", file=sys.stderr)
+
+        lock_file = open(lock_path, "w")  # noqa: SIM115 - held for the run
         try:
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             print("Bot is already running (data/bot.lock is held); nothing to do.")
+            lock_file.close()
+            lock_file = None
             return 0
+        # Persist PID so diagnose/ops can tell a live holder from a stale file
+        # after a crash (empty lock files used to look "held" forever).
+        lock_file.write(f"{os.getpid()}\n")
+        lock_file.flush()
     except ImportError:  # pragma: no cover - non-POSIX platform
         lock_file = None
+        running = None  # noqa: F841 — silence if branch unused
     try:
         if once:
             stats = poll_once(db, client, poll_timeout=poll_timeout)
@@ -1208,7 +1249,13 @@ def _cmd_bot(once: bool = False, poll_timeout: int = 25, db_path: Path | None = 
         return 1
     finally:
         if lock_file is not None:
-            lock_file.close()
+            try:
+                lock_file.close()
+            finally:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
     print(
         f"Bot: {stats.updates} update(s), {len(stats.actions)} action(s), {stats.errors} error(s)."
     )

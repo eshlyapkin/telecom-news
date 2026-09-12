@@ -109,7 +109,8 @@ python -m telecom_news publish --dry-run
 python -m telecom_news run --dry-run --limit 3
 python -m telecom_news doctor
 python -m telecom_news status
-python -m telecom_news diagnose        # почему ничего не публикуется (read-only)
+python -m telecom_news diagnose        # channel + bot + subscribers (read-only)
+# prod MVP ops: docs/SKILLS/prod-mvp-checklist.md
 python -m telecom_news sources            # каталог источников; --verify проверит ленты
 python -m telecom_news deliver --dry-run   # предпросмотр рассылки подписчикам (M8)
 python -m telecom_news bot --once          # обработать команды /start и /language (M8)

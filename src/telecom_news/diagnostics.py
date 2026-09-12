@@ -196,6 +196,15 @@ class Facts:
     publish_max_age_hours: float = 48.0
     stale_run_minutes: float = 45.0
     quiet_hours: float = 6.0
+    # Subscriber bot / DM fan-out (prod MVP). Channel publish does not need these;
+    # deliver does. Diagnose surfaces them so an empty private feed is not mistaken
+    # for a broken publish stage.
+    active_subscribers: int = 0
+    subscribers_without_lang: int = 0
+    suspicious_subscribers: tuple[str, ...] = ()
+    bot_running: bool | None = None
+    bot_lock_stale: bool = False
+    bot_detail: str = ""
 
     def total(self, *statuses: str) -> int:
         return sum(int(self.counts.get(status, 0)) for status in statuses)
@@ -415,6 +424,63 @@ def analyze(facts: Facts) -> Report:
             )
         )
 
+    # 3b. Subscriber bot / private delivery (does not block channel publish).
+    if facts.bot_lock_stale:
+        findings.append(
+            Finding(
+                "bot-lock-stale",
+                "warning",
+                "data/bot.lock looks stale (no live bot process holds it).",
+                "Remove the lock and restart: rm -f data/bot.lock && "
+                "nohup .venv/bin/python -m telecom_news bot >> data/logs/bot.log 2>&1 & "
+                "(see docs/SKILLS/prod-mvp-checklist.md).",
+            )
+        )
+    elif facts.bot_running is False:
+        findings.append(
+            Finding(
+                "bot-down",
+                "warning",
+                "Subscriber bot is not running"
+                + (f" ({facts.bot_detail})" if facts.bot_detail else "."),
+                "Private /start and language buttons need a live "
+                "'python -m telecom_news bot' process. Channel publish via run_pipeline "
+                "does not need the bot.",
+            )
+        )
+    if facts.active_subscribers == 0:
+        findings.append(
+            Finding(
+                "no-subscribers",
+                "warning",
+                "No active subscribers with at least one language — deliver is a no-op.",
+                "Open a private chat with the bot (not the channel) and send /start, "
+                "then pick languages. Channel posts still work without subscribers.",
+            )
+        )
+    elif facts.subscribers_without_lang:
+        findings.append(
+            Finding(
+                "subscribers-no-lang",
+                "warning",
+                f"{facts.subscribers_without_lang} active subscriber(s) have no language "
+                "selected — they get nothing from deliver.",
+                "They should press /language in the private chat with the bot.",
+            )
+        )
+    if facts.suspicious_subscribers:
+        listed = ", ".join(facts.suspicious_subscribers[:5])
+        findings.append(
+            Finding(
+                "suspicious-subscriber",
+                "warning",
+                f"Suspicious subscriber username(s) (looks like the bot itself): {listed}.",
+                "deliver may be targeting the wrong chat. In a private chat send /start; "
+                "if a new real chat_id appears, delete the demo row "
+                "(docs/SKILLS/prod-mvp-checklist.md).",
+            )
+        )
+
     # 4. Healthy pipeline, quiet channel: the news supply or the relevance filter.
     last_publish_hours = _hours_since(facts, facts.last_published_at)
     if not any(finding.blocking for finding in findings):
@@ -487,6 +553,11 @@ _VERDICT_PRIORITY = (
     "parked-errors",
     "stale-processed",
     "stale-queue",
+    "bot-lock-stale",
+    "bot-down",
+    "no-subscribers",
+    "subscribers-no-lang",
+    "suspicious-subscriber",
     "recent-errors",
     "sources-failing",
     "backlog",
@@ -559,6 +630,24 @@ def render(report: Report, facts: Facts, *, show_runs: int = 5) -> str:
         lines.append(f"LM Studio: {'OK' if facts.llm_ok else 'FAIL'} — {facts.llm_detail}")
     if facts.telegram_ok is not None:
         lines.append(f"Telegram: {'OK' if facts.telegram_ok else 'FAIL'} — {facts.telegram_detail}")
+    if facts.bot_running is not None or facts.bot_lock_stale:
+        if facts.bot_lock_stale:
+            bot_line = "Bot: STALE LOCK — no live process"
+        elif facts.bot_running:
+            bot_line = f"Bot: running — {facts.bot_detail or 'lock held'}"
+        else:
+            bot_line = f"Bot: not running — {facts.bot_detail or 'no lock'}"
+        lines.append(bot_line)
+    if facts.db_exists:
+        lines.append(
+            f"Subscribers: active_with_lang={facts.active_subscribers}, "
+            f"active_without_lang={facts.subscribers_without_lang}"
+            + (
+                f", suspicious={', '.join(facts.suspicious_subscribers[:3])}"
+                if facts.suspicious_subscribers
+                else ""
+            )
+        )
 
     if facts.runs:
         lines.append(f"Last {len(facts.runs)} scheduled run(s) from {facts.log_path}:")
@@ -640,3 +729,92 @@ def probe_telegram(token: str, *, timeout: float = 10.0) -> tuple[bool, str]:
         username = data.get("result", {}).get("username")
         return True, f"bot @{username}" if username else "Bot API reachable"
     return False, str(data.get("description") or f"HTTP {response.status_code}")
+
+
+def inspect_bot_lock(lock_path: Path) -> tuple[bool | None, bool, str]:
+    """Inspect ``data/bot.lock`` without taking it.
+
+    Returns ``(running, stale, detail)``:
+    - ``running=True`` — a live process holds the lock (or PID in the file is alive);
+    - ``stale=True`` — lock file exists but no holder (safe to delete);
+    - ``running=False, stale=False`` — no lock file (bot not started).
+    """
+    import os
+
+    if not lock_path.exists():
+        return False, False, "no lock file"
+
+    pid: int | None = None
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip()
+        if raw.isdigit():
+            pid = int(raw)
+    except OSError:
+        return None, False, "cannot read lock file"
+
+    if pid is not None:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False, True, f"stale lock, dead pid {pid}"
+        except PermissionError:
+            # Process exists but we cannot signal it — treat as running.
+            return True, False, f"pid {pid} (permission denied on kill 0)"
+        else:
+            return True, False, f"pid {pid}"
+
+    # Legacy empty lock (pre-PID write): try a non-blocking flock probe.
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover
+        return None, False, "lock present (cannot probe on this platform)"
+
+    try:
+        fd = open(lock_path, "a+")  # noqa: SIM115
+    except OSError as exc:
+        return None, False, f"cannot open lock: {exc}"
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True, False, "lock held (no pid in file)"
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False, True, "stale empty lock"
+    finally:
+        fd.close()
+
+
+def summarize_subscribers(
+    rows: list[dict],
+    languages: dict[str, list[str]],
+    *,
+    bot_username: str = "",
+) -> tuple[int, int, tuple[str, ...]]:
+    """Derive diagnose counters from subscriber rows.
+
+    Returns ``(active_with_lang, active_without_lang, suspicious_usernames)``.
+    A username equal to the bot's own @name (without @) is flagged — that pattern
+    appeared from demo/test updates and makes deliver target the wrong chat.
+    """
+    bot_names = {bot_username.lstrip("@").lower()} if bot_username else set()
+    bot_names.discard("")
+    # Hard-coded known bot nick from this deployment docs (harmless if unused).
+    bot_names.add("sms_telecom_news_bot")
+
+    active_with = 0
+    active_without = 0
+    suspicious: list[str] = []
+    for row in rows:
+        if str(row.get("status") or "") != "active":
+            continue
+        chat_id = str(row.get("chat_id") or "")
+        langs = languages.get(chat_id) or []
+        if langs:
+            active_with += 1
+        else:
+            active_without += 1
+        username = str(row.get("username") or "").lstrip("@").lower()
+        if username and username in bot_names:
+            suspicious.append(username if not chat_id else f"{username}(chat={chat_id})")
+    return active_with, active_without, tuple(suspicious)

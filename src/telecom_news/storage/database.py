@@ -475,6 +475,15 @@ class Database:
             result.setdefault(str(row["chat_id"]), []).append(str(row["lang"]))
         return result
 
+    def list_subscribers(self) -> list[dict[str, Any]]:
+        """All subscriber rows (any status), ordered by chat_id — for diagnose/ops."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT chat_id, username, ui_lang, status, created_at, last_seen_at "
+                "FROM subscribers ORDER BY chat_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # --- deliveries (idempotent fan-out, M8) ------------------------------
 
     def record_delivery(
