@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telecom-news"
-version = "0.1.0"
+version = "0.2.0"
 description = "Daily monitoring and publishing of SMS/messaging industry news (sources -> collect -> normalize -> storage/dedup -> LLM (LM Studio) -> Telegram). MVP interface: CLI."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,8 @@ dependencies = ["httpx", "feedparser"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "ruff>=0.8", "openpyxl>=3.1"]  # openpyxl = `sources import` from .xlsx
+# M9a multi-project HTTP API + minimal GUI (VISION §§40–70 / D-021).
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -29,3 +31,7 @@ select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["telecom_news"]
+
+# Include the minimal GUI static files in the wheel/editable install.
+[tool.setuptools.package-data]
+telecom_news = ["api/static/*"]

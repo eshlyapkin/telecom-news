@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>telecom-news — Multi-Project Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">TN</span>
+      <div>
+        <strong>telecom-news</strong>
+        <div class="muted">Multi-Project News Operations · M9a</div>
+      </div>
+    </div>
+    <div class="switcher" id="switcher">
+      <label for="project-select">Project</label>
+      <select id="project-select"></select>
+    </div>
+    <div class="health" id="health">…</div>
+  </header>
+
+  <main>
+    <section class="panel" id="global">
+      <h1>All projects</h1>
+      <div class="kpis" id="kpis"></div>
+      <p class="muted" id="pause-banner" hidden></p>
+      <div class="cards" id="cards"></div>
+    </section>
+
+    <section class="panel" id="detail" hidden>
+      <h1 id="detail-title">Project</h1>
+      <pre id="detail-body" class="code"></pre>
+      <p class="muted">Full queue / sources / AI rules UI arrives in M9b+. API: <code>/api/projects/{id}</code></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    No auth in M9a — bind to localhost only.
+    Vision: <code>docs/VISION_MULTI_PROJECT.md</code>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

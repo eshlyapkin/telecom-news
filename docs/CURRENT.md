@@ -3,6 +3,40 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-12 (prod MVP): merge checklist + bot/subscriber holes
+
+Goal ① — production MVP for the **news engine** (not full GUI §§40–70).
+
+Code holes fixed (only what ops already hit):
+
+- `bot.lock` stores PID; stale empty/dead-PID lock is removed on `bot` start
+- `diagnose` reports Bot running/stale lock, active subscribers, suspicious
+  username matching the bot nick (`sms_telecom_news_bot` pattern)
+- `Database.list_subscribers()` for ops
+- Runbook: `docs/SKILLS/prod-mvp-checklist.md`
+
+Operator still must: merge/pull, `/start` in private chat, confirm scheduler +
+bot after reboot. Channel quietness from relevance filter is **not** a publish bug.
+
+## Session 2026-09-12 (later): M9a multi-project foundation (S1+S2 + code)
+
+Operator brief §§40–70 accepted as **vision** (not full build-out). Delivered:
+
+- `docs/VISION_MULTI_PROJECT.md` — S1 vision + S2 gap analysis vs CLI/D-020
+- `src/telecom_news/projects.py` — JSON project registry, default `sms-business-news`
+- `src/telecom_news/api/` — optional FastAPI + static GUI (dashboard/switcher)
+- CLI: `projects` (list/show/create/pause-publish/dashboard), `serve`
+- `publish` respects global + default-project kill switches
+- D-021, ROADMAP M9, pyproject optional extra `api`
+
+**Operator machine (from earlier same day, still true unless re-checked):**
+pipeline OK; channel quiet because relevance filter skipped non-SMS items;
+bot was restarted; sole subscriber row still looked like bot self-chat
+(`1288967298` / username `sms_telecom_news_bot`) — needs live `/start` in DM.
+**NOT VERIFIED after M9a:** `serve` on operator host, GUI in browser, auth.
+
+Default project keeps using legacy `data/news.db` — no forced multi-DB migration.
+
 ## Статус расширения источников (2026-09-11)
 
 - Пользователь загрузил в `master` книгу

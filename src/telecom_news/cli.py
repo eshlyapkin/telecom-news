@@ -221,6 +221,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="List what would be deleted, delete nothing"
     )
 
+    projects_parser = subparsers.add_parser(
+        "projects", help="List/manage news projects (M9a multi-project foundation)"
+    )
+    projects_sub = projects_parser.add_subparsers(dest="projects_command")
+    projects_sub.add_parser("list", help="List projects (default action)")
+    show_project = projects_sub.add_parser("show", help="Show one project")
+    show_project.add_argument("project_id", help="Project id (e.g. sms-business-news)")
+    create_project = projects_sub.add_parser("create", help="Create a project")
+    create_project.add_argument("--name", required=True, help="Display name")
+    create_project.add_argument("--id", dest="new_id", default=None, help="Optional stable id")
+    create_project.add_argument("--description", default="", help="Short description")
+    pause_project = projects_sub.add_parser(
+        "pause-publish", help="Set project publish_paused flag (§56)"
+    )
+    pause_project.add_argument("project_id")
+    pause_project.add_argument(
+        "--on", action="store_true", help="Pause publishing for this project"
+    )
+    pause_project.add_argument(
+        "--off", action="store_true", help="Resume publishing for this project"
+    )
+    projects_sub.add_parser("dashboard", help="Print global dashboard snapshot (JSON)")
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Run multi-project HTTP API + GUI (M9a; needs pip install -e '.[api]')",
+    )
+    serve_parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind address (default localhost)"
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="TCP port (default 8765 or TELECOM_NEWS_SERVE_PORT; avoid 8000 if busy)",
+    )
+    serve_parser.add_argument("--reload", action="store_true", help="Dev auto-reload (uvicorn)")
+
     return parser
 
 
@@ -532,11 +570,13 @@ def _cmd_diagnose(
     from .diagnostics import (
         Facts,
         analyze,
+        inspect_bot_lock,
         parse_pipeline_log,
         probe_llm,
         probe_telegram,
         render,
         report_json,
+        summarize_subscribers,
     )
     from .storage.database import Database
 
@@ -556,6 +596,9 @@ def _cmd_diagnose(
     oldest_new_at = None
     oldest_processed_at = None
     health: list[dict] = []
+    active_subscribers = 0
+    subscribers_without_lang = 0
+    suspicious_subscribers: tuple[str, ...] = ()
     db_exists = path.exists()
     if db_exists:
         try:
@@ -589,9 +632,17 @@ def _cmd_diagnose(
                     cutoff=moment - timedelta(hours=config.publish_max_age_hours),
                 )
             health = db.source_health()
+            active_subscribers, subscribers_without_lang, suspicious_subscribers = (
+                summarize_subscribers(
+                    db.list_subscribers(),
+                    db.subscribers_with_languages(status="active"),
+                )
+            )
         except (sqlite3.Error, OSError) as exc:
             print(f"warning: cannot read the database: {exc}", file=sys.stderr)
             db_exists = False
+
+    bot_running, bot_lock_stale, bot_detail = inspect_bot_lock(config.data_dir / "bot.lock")
     # A disabled source is never checked again, so its last error row would stay
     # in source_health forever and make diagnose warn about a feed that is
     # already switched off (D-019). Count only enabled sources; list the rest.
@@ -653,6 +704,12 @@ def _cmd_diagnose(
         llm_detail=llm_detail,
         telegram_ok=telegram_ok,
         telegram_detail=telegram_detail,
+        active_subscribers=active_subscribers,
+        subscribers_without_lang=subscribers_without_lang,
+        suspicious_subscribers=suspicious_subscribers,
+        bot_running=bot_running,
+        bot_lock_stale=bot_lock_stale,
+        bot_detail=bot_detail,
     )
     report = analyze(facts)
     print(report_json(report) if as_json else render(report, facts, show_runs=runs))
@@ -804,6 +861,28 @@ def _cmd_publish(
         print(f"error: --max-age-hours must be >= 0 (got {max_age_hours}).", file=sys.stderr)
         return 2
     config = load_config()
+    # M9a kill switches (§56): global and default-project flags. dry-run still works
+    # so operators can preview while paused.
+    if not dry_run:
+        try:
+            from .projects import DEFAULT_PROJECT_ID, get_registry
+
+            registry = get_registry(config.data_dir)
+            if registry.global_publish_paused():
+                print("Publishing paused globally (projects registry kill switch).")
+                return 0
+            try:
+                default = registry.get(DEFAULT_PROJECT_ID)
+                if default.publish_paused:
+                    print(
+                        f"Publishing paused for project {DEFAULT_PROJECT_ID!r} "
+                        "(projects pause-publish --off to resume)."
+                    )
+                    return 0
+            except KeyError:
+                pass
+        except OSError as exc:
+            print(f"warning: cannot read project registry: {exc}", file=sys.stderr)
     db = Database(db_path or config.db_path)
     targets = list(config.channel_chat_ids)
     if not targets and dry_run:
@@ -1107,6 +1186,8 @@ def _cmd_bot(once: bool = False, poll_timeout: int = 25, db_path: Path | None = 
     lock file is held. ``--once`` performs one ``getUpdates`` round and is useful
     from a scheduler when a long-lived process is not available.
     """
+    import os
+
     from .bot import poll_once, run_bot
     from .config import load_config
     from .delivery.telegram import TelegramClient, TelegramError
@@ -1118,19 +1199,39 @@ def _cmd_bot(once: bool = False, poll_timeout: int = 25, db_path: Path | None = 
         return 2
     db = Database(db_path or config.db_path)
     client = TelegramClient(config.telegram_bot_token, min_interval=config.telegram_min_interval)
+    lock_path = config.data_dir / "bot.lock"
     lock_file = None
     try:
         import fcntl
 
+        from .diagnostics import inspect_bot_lock
+
         config.data_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = open(config.data_dir / "bot.lock", "w")  # noqa: SIM115 - held for the run
+        # If a previous bot crashed and left an empty/stale lock, clear it so a
+        # fresh start is not blocked forever (prod MVP: observed on operator host).
+        running, stale, detail = inspect_bot_lock(lock_path)
+        if stale:
+            try:
+                lock_path.unlink(missing_ok=True)
+                print(f"Removed stale bot.lock ({detail}).", flush=True)
+            except OSError as exc:
+                print(f"warning: cannot remove stale bot.lock: {exc}", file=sys.stderr)
+
+        lock_file = open(lock_path, "w")  # noqa: SIM115 - held for the run
         try:
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             print("Bot is already running (data/bot.lock is held); nothing to do.")
+            lock_file.close()
+            lock_file = None
             return 0
+        # Persist PID so diagnose/ops can tell a live holder from a stale file
+        # after a crash (empty lock files used to look "held" forever).
+        lock_file.write(f"{os.getpid()}\n")
+        lock_file.flush()
     except ImportError:  # pragma: no cover - non-POSIX platform
         lock_file = None
+        running = None  # noqa: F841 — silence if branch unused
     try:
         if once:
             stats = poll_once(db, client, poll_timeout=poll_timeout)
@@ -1148,7 +1249,13 @@ def _cmd_bot(once: bool = False, poll_timeout: int = 25, db_path: Path | None = 
         return 1
     finally:
         if lock_file is not None:
-            lock_file.close()
+            try:
+                lock_file.close()
+            finally:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
     print(
         f"Bot: {stats.updates} update(s), {len(stats.actions)} action(s), {stats.errors} error(s)."
     )
@@ -1286,6 +1393,126 @@ def _cmd_restore(input_path: Path) -> int:
         print(f"error: restore failed: {exc}", file=sys.stderr)
         return 1
     print(f"Database restored: {destination}")
+    return 0
+
+
+def _cmd_projects(args: argparse.Namespace) -> int:
+    """Multi-project registry CLI (M9a)."""
+    import json
+
+    from .config import load_config
+    from .projects import get_registry
+
+    config = load_config()
+    registry = get_registry(config.data_dir)
+    command = getattr(args, "projects_command", None) or "list"
+
+    if command == "list":
+        projects = registry.list_projects()
+        paused = registry.global_publish_paused()
+        print(f"Projects: {len(projects)}" + (" | GLOBAL PUBLISH PAUSED" if paused else ""))
+        print(f"{'id':<28}{'status':<10}{'pub':<8}name")
+        for project in projects:
+            pub = "paused" if project.publish_paused else "on"
+            print(f"{project.id:<28}{project.status:<10}{pub:<8}{project.name}")
+        return 0
+
+    if command == "show":
+        try:
+            project = registry.get(args.project_id)
+        except KeyError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        payload = project.to_dict()
+        payload["db_path_resolved"] = str(registry.resolve_db_path(project, config.data_dir))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if command == "create":
+        try:
+            project = registry.create(
+                name=args.name,
+                project_id=args.new_id,
+                description=args.description or "",
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"Created project {project.id!r} ({project.name}).")
+        return 0
+
+    if command == "pause-publish":
+        if args.on == args.off:
+            print("error: pass exactly one of --on or --off.", file=sys.stderr)
+            return 2
+        try:
+            project = registry.update(args.project_id, publish_paused=bool(args.on))
+        except (KeyError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        state = "paused" if project.publish_paused else "resumed"
+        print(f"Project {project.id}: publishing {state}.")
+        return 0
+
+    if command == "dashboard":
+        snap = registry.dashboard_snapshot(data_dir=config.data_dir, count_articles=True)
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"error: unknown projects command {command!r}.", file=sys.stderr)
+    return 2
+
+
+def _cmd_serve(host: str = "127.0.0.1", port: int | None = None, reload: bool = False) -> int:
+    """Start FastAPI multi-project API + GUI (optional ``.[api]`` extra).
+
+    Default port is **8765** (not 8000 — that port is often taken by other local
+    apps). Override with ``--port`` or ``TELECOM_NEWS_SERVE_PORT``.
+    """
+    import os
+
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "error: API dependencies missing. Install with: pip install -e '.[api]'",
+            file=sys.stderr,
+        )
+        return 2
+    if port is None:
+        raw = os.environ.get("TELECOM_NEWS_SERVE_PORT", "").strip()
+        if raw:
+            try:
+                port = int(raw)
+            except ValueError:
+                print(
+                    f"error: TELECOM_NEWS_SERVE_PORT must be an int (got {raw!r}).",
+                    file=sys.stderr,
+                )
+                return 2
+        else:
+            port = 8765
+    if port < 1 or port > 65535:
+        print(f"error: --port must be 1..65535 (got {port}).", file=sys.stderr)
+        return 2
+    if host not in ("127.0.0.1", "localhost", "::1") and host != "0.0.0.0":
+        print(
+            f"warning: binding to {host!r}; M9a has no authentication.",
+            file=sys.stderr,
+        )
+    if host == "0.0.0.0":
+        print(
+            "warning: 0.0.0.0 exposes the unauthenticated M9a API on all interfaces.",
+            file=sys.stderr,
+        )
+    print(f"Serving multi-project API+GUI on http://{host}:{port}/  (Ctrl-C to stop)")
+    uvicorn.run(
+        "telecom_news.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
     return 0
 
 
@@ -1428,6 +1655,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_deliver(args.limit, args.dry_run, max_age_hours=args.max_age_hours)
     if args.command == "bot":
         return _cmd_bot(args.once, args.poll_timeout)
+    if args.command == "projects":
+        return _cmd_projects(args)
+    if args.command == "serve":
+        return _cmd_serve(args.host, args.port, args.reload)
 
     parser.print_help()
     return 0

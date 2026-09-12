@@ -258,6 +258,31 @@
 
 ---
 
+## M9 — Multi-project platform foundation (VISION §§40–70)
+
+**Цель:** заложить multi-project operations model (Project как top-level object) и
+минимальный HTTP/GUI surface, **не ломая** single-tenant CLI pipeline.
+
+**M9a (foundation) — в работе / этот срез:**
+- Vision + gap: `docs/VISION_MULTI_PROJECT.md`
+- Project registry (`data/projects/registry.json`), default `sms-business-news`
+- CLI: `projects`, `serve`
+- Optional FastAPI: `/api/health`, `/api/projects`, `/api/dashboard`, global pause
+- Minimal static GUI: global KPIs + project cards + switcher
+- Project/global publish kill switch honored by `publish`
+
+**M9b+ (later, not this change set):** wizard, templates, clone, full queue UI,
+RBAC, shared sources, per-project article rows — see vision doc §3.
+
+**Явно НЕ входит в M9a:** authentication, multi-destination publish, cost UI,
+rewriting `articles` schema with `project_id`.
+
+**Зависимости:** M8 + D-020 stable on operator machine; optional `.[api]`.
+
+**Критерии M9a:** см. acceptance list in `docs/VISION_MULTI_PROJECT.md` §7.
+
+---
+
 ## M8 — Языки публикации и подписки пользователей
 
 **Цель:** пользователь при подключении выбирает языки (сейчас `ru`/`en`), может изменить

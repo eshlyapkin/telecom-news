@@ -17,7 +17,8 @@
 - Публикация на нескольких языках (сейчас `ru`/`en`) — отдельный пост на каждый язык
 - Бот с подписками: пользователь выбирает языки при подключении, меняет их в любой момент и может получать несколько языков одновременно
 - CLI для ручного запуска pipeline, отладки и dry-run
-- HTTP API (FastAPI) — **опционально**, добавляется только при подтверждённом use case (не входит в MVP)
+- Multi-project registry (M9a): несколько Project в одном GUI/API; default = текущий SMS pipeline
+- HTTP API + minimal GUI (FastAPI) — **опционально** (`pip install -e '.[api]'`), use case confirmed (D-021 / VISION §§40–70)
 
 ## Архитектура
 
@@ -108,17 +109,24 @@ python -m telecom_news publish --dry-run
 python -m telecom_news run --dry-run --limit 3
 python -m telecom_news doctor
 python -m telecom_news status
-python -m telecom_news diagnose        # почему ничего не публикуется (read-only)
+python -m telecom_news diagnose        # channel + bot + subscribers (read-only)
+# prod MVP ops: docs/SKILLS/prod-mvp-checklist.md
 python -m telecom_news sources            # каталог источников; --verify проверит ленты
 python -m telecom_news deliver --dry-run   # предпросмотр рассылки подписчикам (M8)
 python -m telecom_news bot --once          # обработать команды /start и /language (M8)
 python -m telecom_news prune --dry-run     # старые статьи в очереди (D-020)
+python -m telecom_news projects list       # multi-project registry (M9a)
+python -m telecom_news projects dashboard
+
+# Optional multi-project API + GUI (M9a; localhost, no auth)
+pip install -e '.[api]'
+python -m telecom_news serve               # http://127.0.0.1:8765/
 
 # Тесты
 pytest
 ```
 
-> HTTP API-сервер не входит в MVP и запускается только после подтверждения FastAPI (см. docs/DECISIONS.md, D-004).
+> HTTP API/GUI — optional extra `.[api]` (D-021). Default bind is localhost; M9a has no authentication. Full multi-project vision: `docs/VISION_MULTI_PROJECT.md`.
 
 ## Лицензия
 

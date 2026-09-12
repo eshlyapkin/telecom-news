@@ -151,7 +151,10 @@ def test_diagnose_json_output_is_machine_readable(tmp_path: Path, monkeypatch, c
 
     assert code == 0
     assert payload["blocking"] is False
-    assert payload["findings"][0]["code"] == "never-published"
+    codes = {item["code"] for item in payload["findings"]}
+    # Prod-MVP also surfaces bot/subscriber warnings; the channel verdict remains.
+    assert "never-published" in codes
+    assert payload["verdict"]
 
 
 def test_diagnose_rejects_bad_runs_argument(tmp_path: Path, monkeypatch, capsys) -> None:

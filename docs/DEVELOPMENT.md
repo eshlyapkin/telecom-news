@@ -275,6 +275,11 @@ D-015, миграция сразу считает исчерпавшими ре�
 одной строки `telecom_news.bot`, процесс бота не запущен или `data/bot.lock`
 держит другой экземпляр.
 
+`data/bot.lock` содержит PID живого процесса. После краша пустой/мёртвый lock
+`bot` снимает сам при старте; `diagnose` печатает `Bot: STALE LOCK` /
+`Bot: running — pid N` и блок `Subscribers:` (в т.ч. suspicious username =
+ник бота). Полный прод-чеклист: `docs/SKILLS/prod-mvp-checklist.md`.
+
 Backup и restore SQLite:
 
 ```bash
