@@ -1,4 +1,4 @@
-"""FastAPI application: multi-project API + M9b control panel GUI."""
+"""FastAPI application: multi-project API + M9b/M9c control panel GUI."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..ai_rules import load_rules, reset_rules, rules_for_api, save_rules
 from ..config import load_config
+from ..pipeline_run import get_run_status, start_run
 from ..projects import DEFAULT_PROJECT_ID, ProjectRegistry, get_registry
 from ..source_overrides import apply_to_sources, list_sources_for_api, set_source_enabled
 from .ops import ops_status, project_queue
@@ -52,6 +54,21 @@ class SourceEnableBody(BaseModel):
     enabled: bool
 
 
+class RunNowBody(BaseModel):
+    stage: str = "full"  # full | collect | process | publish | deliver
+    dry_run: bool = False
+    limit: int | None = Field(default=None, ge=1, le=500)
+    max_posts: int | None = Field(default=None, ge=0, le=100)
+
+
+class AiRulesBody(BaseModel):
+    system_prompt: str | None = None
+    messaging_terms: list[str] | str | None = None
+    off_topic_terms: list[str] | str | None = None
+    force_llm_gate: bool | None = None
+    notes: str | None = None
+
+
 def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
     """Build the API app. ``registry`` is injectable for tests."""
     config = load_config()
@@ -62,10 +79,10 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
     app = FastAPI(
         title="telecom-news",
         description=(
-            "Multi-project news operations API (M9b control panel). "
+            "Multi-project news operations API (M9c control panel). "
             "No authentication — localhost only."
         ),
-        version="0.3.0",
+        version="0.4.0",
     )
     app.state.registry = reg
     app.state.data_dir = config.data_dir
@@ -79,7 +96,7 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         return {
             "status": "ok",
             "service": "telecom-news",
-            "version": "0.3.0",
+            "version": "0.4.0",
             "global_publish_paused": reg.global_publish_paused(),
         }
 
@@ -89,7 +106,9 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
 
     @app.get("/api/ops/status")
     def status(project_id: str | None = None) -> dict[str, Any]:
-        return ops_status(reg, data_dir=config.data_dir, project_id=project_id)
+        payload = ops_status(reg, data_dir=config.data_dir, project_id=project_id)
+        payload["run"] = get_run_status()
+        return payload
 
     @app.get("/api/projects")
     def list_projects() -> dict[str, Any]:
@@ -177,6 +196,33 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.post("/api/projects/{project_id}/run")
+    def run_now(project_id: str, body: RunNowBody) -> dict[str, Any]:
+        """Start collect/process/publish/deliver in a background thread (M9c)."""
+        try:
+            project = reg.get(project_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        db_path = reg.resolve_db_path(project, config.data_dir)
+        try:
+            return start_run(
+                project_id=project_id,
+                data_dir=Path(config.data_dir),
+                db_path=db_path,
+                stage=body.stage,
+                dry_run=body.dry_run,
+                limit=body.limit,
+                max_posts=body.max_posts,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/run/status")
+    def run_status() -> dict[str, Any]:
+        return get_run_status()
+
     @app.get("/api/sources")
     def sources() -> dict[str, Any]:
         rows = list_sources_for_api()
@@ -192,6 +238,27 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
             return set_source_enabled(source_id, body.enabled, data_dir=config.data_dir)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/ai-rules")
+    def get_ai_rules() -> dict[str, Any]:
+        return rules_for_api(config.data_dir)
+
+    @app.put("/api/ai-rules")
+    def put_ai_rules(body: AiRulesBody) -> dict[str, Any]:
+        current = load_rules(config.data_dir).to_dict()
+        patch = body.model_dump(exclude_unset=True)
+        if not patch:
+            raise HTTPException(status_code=400, detail="no fields to update")
+        current.update(patch)
+        if isinstance(current.get("system_prompt"), str) and not current["system_prompt"].strip():
+            raise HTTPException(status_code=400, detail="system_prompt must not be empty")
+        save_rules(current, data_dir=config.data_dir)
+        return rules_for_api(config.data_dir)
+
+    @app.post("/api/ai-rules/reset")
+    def ai_rules_reset() -> dict[str, Any]:
+        reset_rules(config.data_dir)
+        return rules_for_api(config.data_dir)
 
     @app.post("/api/system/publish-pause")
     def global_pause(body: GlobalPauseBody) -> dict[str, Any]:

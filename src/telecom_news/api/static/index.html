@@ -12,7 +12,7 @@
       <span class="logo">TN</span>
       <div>
         <strong>telecom-news</strong>
-        <div class="muted">M9b control panel · localhost only</div>
+        <div class="muted">M9c control panel · localhost only</div>
       </div>
     </div>
     <div class="switcher">
@@ -26,6 +26,7 @@
     <button type="button" class="tab active" data-tab="overview">Overview</button>
     <button type="button" class="tab" data-tab="queue">Queue</button>
     <button type="button" class="tab" data-tab="sources">Sources</button>
+    <button type="button" class="tab" data-tab="ai-rules">AI rules</button>
   </nav>
 
   <main>
@@ -34,6 +35,7 @@
         <h1 id="overview-title">Overview</h1>
         <div class="actions">
           <button type="button" class="btn" id="btn-refresh">Refresh</button>
+          <button type="button" class="btn primary" id="btn-run-now">Run now</button>
           <button type="button" class="btn danger" id="btn-pause-project">Pause publish</button>
           <button type="button" class="btn ok" id="btn-resume-project" hidden>Resume publish</button>
           <button type="button" class="btn warn" id="btn-pause-global">Global pause…</button>
@@ -41,6 +43,7 @@
         </div>
       </div>
       <p class="banner" id="pause-banner" hidden></p>
+      <p class="banner" id="run-banner" hidden></p>
       <div class="kpis" id="kpis"></div>
       <div class="grid-2">
         <div class="card static">
@@ -48,12 +51,40 @@
           <div id="status-body" class="kv"></div>
         </div>
         <div class="card static">
-          <h2>Last publication</h2>
-          <div id="last-pub" class="kv"></div>
+          <h2>Run now</h2>
+          <div class="run-form">
+            <label>Stage
+              <select id="run-stage">
+                <option value="full">full (collect→process→publish→deliver)</option>
+                <option value="collect">collect only</option>
+                <option value="process">process only (LLM)</option>
+                <option value="publish">publish only (channel)</option>
+                <option value="deliver">deliver only (subscribers)</option>
+              </select>
+            </label>
+            <label>Limit (articles)
+              <input type="number" id="run-limit" min="1" max="500" placeholder="default" />
+            </label>
+            <label class="check">
+              <input type="checkbox" id="run-dry" /> dry-run (no Telegram send)
+            </label>
+            <div class="actions">
+              <button type="button" class="btn primary" id="btn-run-submit">Start pipeline</button>
+            </div>
+          </div>
+          <div id="run-status" class="kv muted small"></div>
+          <pre id="run-log" class="log" hidden></pre>
           <p class="muted small">
-            Pipeline runs via Task Scheduler / <code>run_pipeline.sh</code>, not from this page.
+            Task Scheduler / <code>run_pipeline.sh</code> still runs on its own.
+            <strong>Run now</strong> starts one extra cycle in the API process.
             Pause only blocks <code>publish</code> (channel posts).
           </p>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="card static">
+          <h2>Last publication</h2>
+          <div id="last-pub" class="kv"></div>
         </div>
       </div>
       <div class="cards" id="project-cards"></div>
@@ -92,11 +123,44 @@
         <tr><th>on</th><th>id</th><th>lang</th><th>gate</th><th>url</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
+
+    <section class="panel tab-panel" id="panel-ai-rules" hidden>
+      <div class="toolbar">
+        <h1>AI rules</h1>
+        <div class="actions">
+          <button type="button" class="btn" id="btn-refresh-rules">Refresh</button>
+          <button type="button" class="btn ok" id="btn-save-rules">Save</button>
+          <button type="button" class="btn warn" id="btn-reset-rules">Reset to defaults</button>
+        </div>
+      </div>
+      <p class="muted small" id="rules-meta">
+        Edits apply to the next <code>process</code> / <code>run</code> cycle
+        (saved as <code>data/ai_rules.json</code>).
+      </p>
+      <div class="card static">
+        <label class="block">System prompt (LLM classifier)
+          <textarea id="rules-prompt" rows="8" spellcheck="false"></textarea>
+        </label>
+        <label class="block">Messaging terms (one per line — keyword gate must match at least one)
+          <textarea id="rules-messaging" rows="8" spellcheck="false"></textarea>
+        </label>
+        <label class="block">Off-topic terms (one per line — rejected without LLM when gate is on)
+          <textarea id="rules-offtopic" rows="6" spellcheck="false"></textarea>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="rules-force-llm" />
+          Force LLM for all sources (bypass keyword gate — costlier, D-012 style)
+        </label>
+        <label class="block">Notes (operator only, not sent to model)
+          <textarea id="rules-notes" rows="2"></textarea>
+        </label>
+        <p class="muted small" id="rules-status"></p>
+      </div>
+    </section>
   </main>
 
   <footer class="foot">
-    No auth · bind 127.0.0.1 only · M9b: pause / queue / sources.
-    Filters &amp; AI rules per channel → later milestone.
+    No auth · bind 127.0.0.1 only · M9c: pause / queue / sources / run-now / AI rules.
   </footer>
   <script src="/static/app.js"></script>
 </body>

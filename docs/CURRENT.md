@@ -3,14 +3,20 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-12 (M9c): run-now + AI rules UI
+
+- **Run now** on Overview: `POST /api/projects/{id}/run` starts
+  collect/process/publish/deliver (or one stage) in a background thread;
+  status via `/api/run/status` + log tail. One run at a time.
+- **AI rules** tab: edit relevance system prompt, messaging/off-topic terms,
+  force-LLM gate; persists `data/ai_rules.json`. Affects next `process`/`run`.
+- Version **0.4.0**.
+
 ## Session 2026-09-12 (M9b): control panel on :8765
 
 GUI tabs Overview / Queue / Sources: project+global publish pause, article
 queue tables, source enable toggles (`data/disabled_sources.json`). API
 `/api/ops/status`, `/queue`, `/api/sources`. Version 0.3.0.
-
-**NOT in M9b:** per-channel AI filter editor, start/stop of cron itself,
-multi-project article isolation, auth.
 
 Operator: `systemctl --user restart telecom-news-serve` then hard-refresh browser.
 

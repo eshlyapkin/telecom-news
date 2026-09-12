@@ -5,4 +5,4 @@ project registry, optional FastAPI GUI. See ``docs/ROADMAP.md`` and
 ``docs/VISION_MULTI_PROJECT.md``.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

@@ -62,6 +62,10 @@ data/pipeline.lock
 data/*.lock
 data/projects/
 data/disabled_sources.json
+data/ai_rules.json
+data/last_run.json
+data/logs/run-now.log
 *.patch
-m9b-files.zip*
-*:Zone.Identifier
+apply_m9c.py
+apply_m9b.py
+m9c-files.zip*

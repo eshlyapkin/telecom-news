@@ -59,6 +59,7 @@ main { padding: 1.1rem 1.25rem 2rem; flex: 1; max-width: 1200px; width: 100%; ma
 .btn.ok { border-color: var(--ok); color: var(--ok); }
 .btn.warn { border-color: var(--warn); color: var(--warn); }
 .btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.primary { border-color: var(--accent); color: #cfe0ff; background: rgba(61, 139, 253, 0.15); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .banner {
@@ -67,6 +68,28 @@ main { padding: 1.1rem 1.25rem 2rem; flex: 1; max-width: 1200px; width: 100%; ma
 }
 .banner.bad {
   background: rgba(243, 18, 96, 0.12); border-color: var(--bad); color: var(--bad);
+}
+.banner.ok {
+  background: rgba(61, 214, 140, 0.12); border-color: var(--ok); color: var(--ok);
+}
+
+.run-form { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.75rem; }
+.run-form label, .block {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  font-size: 0.8rem; color: var(--muted);
+}
+.run-form select, .run-form input[type=number],
+textarea {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 0.4rem;
+  padding: 0.4rem 0.55rem; font: inherit;
+}
+textarea { width: 100%; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.35; }
+.check { flex-direction: row !important; align-items: center; gap: 0.5rem !important; color: var(--text) !important; font-size: 0.85rem !important; }
+.log {
+  background: #0a0e14; border: 1px solid var(--border); border-radius: 0.4rem;
+  padding: 0.6rem; max-height: 14rem; overflow: auto;
+  font-size: 0.72rem; line-height: 1.35; white-space: pre-wrap; color: #b8c4d8;
 }
 
 .kpis {

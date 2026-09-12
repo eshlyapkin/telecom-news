@@ -1,7 +1,8 @@
-/* M9b control panel: overview pause, queue, sources toggles. */
+/* M9c control panel: overview pause, run-now, queue, sources, AI rules. */
 
 let currentProjectId = "";
 let statusCache = null;
+let runPollTimer = null;
 
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
@@ -51,6 +52,7 @@ function showTab(name) {
   });
   if (name === "queue") refreshQueue();
   if (name === "sources") refreshSources();
+  if (name === "ai-rules") refreshRules();
 }
 
 function renderKpis(status, dash) {
@@ -69,6 +71,68 @@ function renderKpis(status, dash) {
         `<div class="kpi"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(fmt(value))}</div></div>`
     )
     .join("");
+}
+
+function renderRun(run) {
+  if (!run) return;
+  const banner = el("run-banner");
+  const running = run.status === "running";
+  el("btn-run-now").disabled = running;
+  el("btn-run-submit").disabled = running;
+  if (running) {
+    banner.hidden = false;
+    banner.className = "banner";
+    banner.textContent = `Pipeline RUNNING (${run.stage}) since ${run.started_at || "…"}`;
+  } else if (run.status === "error") {
+    banner.hidden = false;
+    banner.className = "banner bad";
+    banner.textContent = `Last run ERROR (exit ${run.exit_code}) ${run.error || ""}`.trim();
+  } else if (run.status === "ok") {
+    banner.hidden = false;
+    banner.className = "banner ok";
+    banner.textContent = `Last run OK · ${run.stage} · finished ${run.finished_at || ""}`;
+  } else {
+    banner.hidden = true;
+  }
+
+  el("run-status").innerHTML = [
+    ["Status", run.status],
+    ["Stage", run.stage],
+    ["Started", run.started_at],
+    ["Finished", run.finished_at],
+    ["Exit", run.exit_code],
+  ]
+    .map(
+      ([k, v]) =>
+        `<div><span>${escapeHtml(k)}</span><span>${escapeHtml(fmt(v))}</span></div>`
+    )
+    .join("");
+
+  const log = el("run-log");
+  if (run.log_tail) {
+    log.hidden = false;
+    log.textContent = run.log_tail;
+  } else if (!running) {
+    log.hidden = true;
+    log.textContent = "";
+  }
+
+  if (running && !runPollTimer) {
+    runPollTimer = setInterval(async () => {
+      try {
+        const s = await fetchJson("/api/run/status");
+        renderRun(s);
+        if (s.status !== "running") {
+          clearInterval(runPollTimer);
+          runPollTimer = null;
+          refreshAll();
+          refreshQueue();
+        }
+      } catch {
+        /* ignore transient */
+      }
+    }, 1500);
+  }
 }
 
 function renderStatus(status) {
@@ -117,6 +181,8 @@ function renderStatus(status) {
   el("btn-resume-project").hidden = !status.project_publish_paused;
   el("btn-pause-global").hidden = !!status.global_publish_paused;
   el("btn-resume-global").hidden = !status.global_publish_paused;
+
+  renderRun(status.run || { status: "idle" });
 }
 
 function renderCards(dash) {
@@ -181,7 +247,11 @@ async function refreshAll() {
     renderKpis(status, dash);
     renderStatus(status);
     renderCards(dash);
-    setHealth(!status.publish_effectively_paused, status.publish_effectively_paused ? "PAUSED" : "API · OK");
+    const runBusy = status.run && status.run.status === "running";
+    setHealth(
+      !status.publish_effectively_paused && !runBusy,
+      runBusy ? "RUNNING" : status.publish_effectively_paused ? "PAUSED" : "API · OK"
+    );
   } catch (err) {
     setHealth(false, "API error");
     el("kpis").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
@@ -282,6 +352,59 @@ function renderSources() {
   });
 }
 
+function termsToText(list) {
+  return (list || []).join("\n");
+}
+
+function textToTerms(text) {
+  return String(text || "")
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function refreshRules() {
+  try {
+    const data = await fetchJson("/api/ai-rules");
+    const r = data.rules || {};
+    el("rules-prompt").value = r.system_prompt || "";
+    el("rules-messaging").value = termsToText(r.messaging_terms);
+    el("rules-offtopic").value = termsToText(r.off_topic_terms);
+    el("rules-force-llm").checked = !!r.force_llm_gate;
+    el("rules-notes").value = r.notes || "";
+    el("rules-meta").textContent = data.overridden
+      ? `Override file: ${data.path}`
+      : `Using built-in defaults (no file yet). Will write ${data.path} on Save.`;
+    el("rules-status").textContent = "";
+  } catch (err) {
+    el("rules-status").textContent = err.message;
+  }
+}
+
+async function saveRules() {
+  const body = {
+    system_prompt: el("rules-prompt").value,
+    messaging_terms: textToTerms(el("rules-messaging").value),
+    off_topic_terms: textToTerms(el("rules-offtopic").value),
+    force_llm_gate: el("rules-force-llm").checked,
+    notes: el("rules-notes").value,
+  };
+  await fetchJson("/api/ai-rules", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  el("rules-status").textContent = "Saved.";
+  await refreshRules();
+}
+
+async function resetRules() {
+  if (!confirm("Reset AI rules to built-in defaults and delete ai_rules.json?")) return;
+  await fetchJson("/api/ai-rules/reset", { method: "POST" });
+  el("rules-status").textContent = "Reset to defaults.";
+  await refreshRules();
+}
+
 async function pauseProject(paused) {
   if (!currentProjectId) return;
   await fetchJson(`/api/projects/${encodeURIComponent(currentProjectId)}/publish-pause`, {
@@ -302,16 +425,41 @@ async function pauseGlobal(paused) {
   await refreshAll();
 }
 
+async function startRunNow() {
+  if (!currentProjectId) return;
+  const limitRaw = el("run-limit").value;
+  const body = {
+    stage: el("run-stage").value || "full",
+    dry_run: el("run-dry").checked,
+  };
+  if (limitRaw) body.limit = Number(limitRaw);
+  const data = await fetchJson(`/api/projects/${encodeURIComponent(currentProjectId)}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  renderRun(data);
+  showTab("overview");
+}
+
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => showTab(btn.dataset.tab));
 });
 el("btn-refresh").onclick = () => refreshAll();
 el("btn-refresh-queue").onclick = () => refreshQueue();
 el("btn-refresh-sources").onclick = () => refreshSources();
+el("btn-refresh-rules").onclick = () => refreshRules();
+el("btn-save-rules").onclick = () => saveRules().catch((e) => alert(e.message));
+el("btn-reset-rules").onclick = () => resetRules().catch((e) => alert(e.message));
 el("btn-pause-project").onclick = () => pauseProject(true).catch((e) => alert(e.message));
 el("btn-resume-project").onclick = () => pauseProject(false).catch((e) => alert(e.message));
 el("btn-pause-global").onclick = () => pauseGlobal(true).catch((e) => alert(e.message));
 el("btn-resume-global").onclick = () => pauseGlobal(false).catch((e) => alert(e.message));
+el("btn-run-now").onclick = () => {
+  el("run-stage").focus();
+  window.scrollTo({ top: el("run-stage").offsetTop - 80, behavior: "smooth" });
+};
+el("btn-run-submit").onclick = () => startRunNow().catch((e) => alert(e.message));
 el("source-filter").oninput = () => renderSources();
 
 refreshAll();

@@ -35,7 +35,8 @@ MAX_INPUT_CHARS = 4000
 # Cheap deterministic guard for broad vendor feeds. It prevents obvious
 # voice/video/developer material from reaching the LLM and being misclassified
 # as messaging merely because the publisher is a communications company.
-MESSAGING_TERMS: tuple[str, ...] = (
+# Built-in defaults. Runtime may override via data/ai_rules.json (M9c).
+DEFAULT_MESSAGING_TERMS: tuple[str, ...] = (
     # Latin script. These also match Russian articles that keep the Latin
     # spelling ("SMS-рассылки"), but see the Cyrillic block below.
     "sms",
@@ -77,7 +78,7 @@ MESSAGING_TERMS: tuple[str, ...] = (
 # every press release), "рассылк" (mostly email marketing noise), "верификац"
 # (KYC/fintech noise), "ркс" (Cyrillic "RCS" collides with unrelated "РКС").
 # They would turn this guard into a no-op and spend LM Studio calls on junk.
-OBVIOUSLY_OFF_TOPIC_TERMS: tuple[str, ...] = (
+DEFAULT_OFF_TOPIC_TERMS: tuple[str, ...] = (
     "video chat",
     "programmable video",
     "web rtc",
@@ -100,6 +101,46 @@ OBVIOUSLY_OFF_TOPIC_TERMS: tuple[str, ...] = (
     "почтовая рассылк",
 )
 
+# Back-compat aliases (tests / importers may still reference these names).
+MESSAGING_TERMS: tuple[str, ...] = DEFAULT_MESSAGING_TERMS
+OBVIOUSLY_OFF_TOPIC_TERMS: tuple[str, ...] = DEFAULT_OFF_TOPIC_TERMS
+
+
+def _active_messaging_terms() -> tuple[str, ...]:
+    try:
+        from ..ai_rules import load_rules
+
+        return tuple(load_rules().messaging_terms)
+    except Exception:  # noqa: BLE001 — never break classify on rules I/O
+        return DEFAULT_MESSAGING_TERMS
+
+
+def _active_off_topic_terms() -> tuple[str, ...]:
+    try:
+        from ..ai_rules import load_rules
+
+        return tuple(load_rules().off_topic_terms)
+    except Exception:  # noqa: BLE001
+        return DEFAULT_OFF_TOPIC_TERMS
+
+
+def _active_system_prompt() -> str:
+    try:
+        from ..ai_rules import load_rules
+
+        return load_rules().system_prompt
+    except Exception:  # noqa: BLE001
+        return DEFAULT_RELEVANCE_SYSTEM_PROMPT
+
+
+def _force_llm_gate() -> bool:
+    try:
+        from ..ai_rules import load_rules
+
+        return bool(load_rules().force_llm_gate)
+    except Exception:  # noqa: BLE001
+        return False
+
 
 def _haystack(article: Article) -> str:
     return f"{article.title} {article.body}".casefold()
@@ -107,7 +148,8 @@ def _haystack(article: Article) -> str:
 
 def has_messaging_signal(article: Article) -> bool:
     """Return true when the text explicitly signals the target ecosystem."""
-    return any(term in _haystack(article) for term in MESSAGING_TERMS)
+    terms = _active_messaging_terms()
+    return any(term in _haystack(article) for term in terms)
 
 
 def is_obviously_off_topic(article: Article) -> bool:
@@ -124,17 +166,17 @@ def is_obviously_off_topic(article: Article) -> bool:
     returned early for articles without a signal, so rule 2 could never fire
     there and the whole guard was dead code.
     """
+    messaging = _active_messaging_terms()
+    off_topic = _active_off_topic_terms()
     title = (article.title or "").casefold()
-    if any(term in title for term in OBVIOUSLY_OFF_TOPIC_TERMS) and not any(
-        term in title for term in MESSAGING_TERMS
-    ):
+    if any(term in title for term in off_topic) and not any(term in title for term in messaging):
         return True
-    return any(term in _haystack(article) for term in OBVIOUSLY_OFF_TOPIC_TERMS) and not (
+    return any(term in _haystack(article) for term in off_topic) and not (
         has_messaging_signal(article)
     )
 
 
-RELEVANCE_SYSTEM_PROMPT = (
+DEFAULT_RELEVANCE_SYSTEM_PROMPT = (
     "You are a news relevance classifier for an SMS-industry monitoring system. "
     "Decide whether the article is about the SMS/messaging ecosystem: A2P/P2A/P2P "
     "SMS, SMS vendors and messaging platforms, aggregators, carriers in SMS business "
@@ -148,6 +190,9 @@ RELEVANCE_SYSTEM_PROMPT = (
     'regulation> or null", "reason": "<one short sentence>"}. '
     "If relevant is false, category must be null."
 )
+
+# Back-compat alias.
+RELEVANCE_SYSTEM_PROMPT = DEFAULT_RELEVANCE_SYSTEM_PROMPT
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
@@ -196,7 +241,8 @@ def check_relevance(
     the keyword list need that (DECISIONS.md D-012); broad vendor feeds keep the
     guard so obvious voice/video/email material never costs an LLM call.
     """
-    if use_gate:
+    gate_on = use_gate and not _force_llm_gate()
+    if gate_on:
         if not has_messaging_signal(article):
             return RelevanceResult(
                 relevant=False,
@@ -211,7 +257,7 @@ def check_relevance(
             )
     content = client.chat(
         [
-            {"role": "system", "content": RELEVANCE_SYSTEM_PROMPT},
+            {"role": "system", "content": _active_system_prompt()},
             {
                 "role": "user",
                 "content": (
