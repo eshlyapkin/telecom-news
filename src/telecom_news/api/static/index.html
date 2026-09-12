@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>telecom-news — Multi-Project Dashboard</title>
+  <title>telecom-news — Control Panel</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -12,34 +12,91 @@
       <span class="logo">TN</span>
       <div>
         <strong>telecom-news</strong>
-        <div class="muted">Multi-Project News Operations · M9a</div>
+        <div class="muted">M9b control panel · localhost only</div>
       </div>
     </div>
-    <div class="switcher" id="switcher">
+    <div class="switcher">
       <label for="project-select">Project</label>
       <select id="project-select"></select>
     </div>
     <div class="health" id="health">…</div>
   </header>
 
+  <nav class="tabs" id="tabs">
+    <button type="button" class="tab active" data-tab="overview">Overview</button>
+    <button type="button" class="tab" data-tab="queue">Queue</button>
+    <button type="button" class="tab" data-tab="sources">Sources</button>
+  </nav>
+
   <main>
-    <section class="panel" id="global">
-      <h1>All projects</h1>
+    <section class="panel tab-panel" id="panel-overview">
+      <div class="toolbar">
+        <h1 id="overview-title">Overview</h1>
+        <div class="actions">
+          <button type="button" class="btn" id="btn-refresh">Refresh</button>
+          <button type="button" class="btn danger" id="btn-pause-project">Pause publish</button>
+          <button type="button" class="btn ok" id="btn-resume-project" hidden>Resume publish</button>
+          <button type="button" class="btn warn" id="btn-pause-global">Global pause…</button>
+          <button type="button" class="btn ok" id="btn-resume-global" hidden>Global resume</button>
+        </div>
+      </div>
+      <p class="banner" id="pause-banner" hidden></p>
       <div class="kpis" id="kpis"></div>
-      <p class="muted" id="pause-banner" hidden></p>
-      <div class="cards" id="cards"></div>
+      <div class="grid-2">
+        <div class="card static">
+          <h2>Status</h2>
+          <div id="status-body" class="kv"></div>
+        </div>
+        <div class="card static">
+          <h2>Last publication</h2>
+          <div id="last-pub" class="kv"></div>
+          <p class="muted small">
+            Pipeline runs via Task Scheduler / <code>run_pipeline.sh</code>, not from this page.
+            Pause only blocks <code>publish</code> (channel posts).
+          </p>
+        </div>
+      </div>
+      <div class="cards" id="project-cards"></div>
     </section>
 
-    <section class="panel" id="detail" hidden>
-      <h1 id="detail-title">Project</h1>
-      <pre id="detail-body" class="code"></pre>
-      <p class="muted">Full queue / sources / AI rules UI arrives in M9b+. API: <code>/api/projects/{id}</code></p>
+    <section class="panel tab-panel" id="panel-queue" hidden>
+      <div class="toolbar">
+        <h1>Queue</h1>
+        <button type="button" class="btn" id="btn-refresh-queue">Refresh</button>
+      </div>
+      <div class="kpis" id="queue-kpis"></div>
+      <h2 class="sub">New (awaiting LLM)</h2>
+      <div class="table-wrap"><table id="table-new"><thead>
+        <tr><th>id</th><th>source</th><th>title</th><th>published</th></tr>
+      </thead><tbody></tbody></table></div>
+      <h2 class="sub">Processed (awaiting channel)</h2>
+      <div class="table-wrap"><table id="table-processed"><thead>
+        <tr><th>id</th><th>source</th><th>title</th><th>published</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="panel tab-panel" id="panel-sources" hidden>
+      <div class="toolbar">
+        <h1>Sources</h1>
+        <div class="actions">
+          <input type="search" id="source-filter" placeholder="Filter id / url…" />
+          <button type="button" class="btn" id="btn-refresh-sources">Refresh</button>
+        </div>
+      </div>
+      <p class="muted small">
+        Toggle writes <code>data/disabled_sources.json</code> and updates the live registry
+        for <strong>this</strong> API process. Restart <code>run_pipeline</code> / bot to pick
+        up disables in other processes, or set <code>TELECOM_NEWS_DISABLED_SOURCES</code> in env.
+      </p>
+      <div class="table-wrap"><table id="table-sources"><thead>
+        <tr><th>on</th><th>id</th><th>lang</th><th>gate</th><th>url</th></tr>
+      </thead><tbody></tbody></table></div>
     </section>
   </main>
 
   <footer class="foot">
-    No auth in M9a — bind to localhost only.
-    Vision: <code>docs/VISION_MULTI_PROJECT.md</code>
+    No auth · bind 127.0.0.1 only · M9b: pause / queue / sources.
+    Filters &amp; AI rules per channel → later milestone.
   </footer>
   <script src="/static/app.js"></script>
 </body>

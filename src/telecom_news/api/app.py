@@ -1,4 +1,4 @@
-"""FastAPI application: multi-project API + static GUI shell (M9a)."""
+"""FastAPI application: multi-project API + M9b control panel GUI."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..config import load_config
-from ..projects import ProjectRegistry, get_registry
+from ..projects import DEFAULT_PROJECT_ID, ProjectRegistry, get_registry
+from ..source_overrides import apply_to_sources, list_sources_for_api, set_source_enabled
+from .ops import ops_status, project_queue
 
 
 class ProjectCreate(BaseModel):
@@ -42,18 +44,28 @@ class GlobalPauseBody(BaseModel):
     confirm: bool = False
 
 
+class ProjectPauseBody(BaseModel):
+    paused: bool
+
+
+class SourceEnableBody(BaseModel):
+    enabled: bool
+
+
 def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
     """Build the API app. ``registry`` is injectable for tests."""
     config = load_config()
     reg = registry or get_registry(config.data_dir)
+    # Honour GUI/file source disables for this process (and any shared SOURCES).
+    apply_to_sources(config.data_dir)
 
     app = FastAPI(
         title="telecom-news",
         description=(
-            "Multi-project news operations API (M9a foundation). "
+            "Multi-project news operations API (M9b control panel). "
             "No authentication — localhost only."
         ),
-        version="0.2.0",
+        version="0.3.0",
     )
     app.state.registry = reg
     app.state.data_dir = config.data_dir
@@ -67,12 +79,17 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         return {
             "status": "ok",
             "service": "telecom-news",
+            "version": "0.3.0",
             "global_publish_paused": reg.global_publish_paused(),
         }
 
     @app.get("/api/dashboard")
     def dashboard() -> dict[str, Any]:
         return reg.dashboard_snapshot(data_dir=config.data_dir, count_articles=True)
+
+    @app.get("/api/ops/status")
+    def status(project_id: str | None = None) -> dict[str, Any]:
+        return ops_status(reg, data_dir=config.data_dir, project_id=project_id)
 
     @app.get("/api/projects")
     def list_projects() -> dict[str, Any]:
@@ -137,6 +154,45 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"status": "deleted", "id": project_id}
 
+    @app.post("/api/projects/{project_id}/publish-pause")
+    def project_pause(project_id: str, body: ProjectPauseBody) -> dict[str, Any]:
+        try:
+            project = reg.update(project_id, publish_paused=bool(body.paused))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "id": project.id,
+            "publish_paused": project.publish_paused,
+            "global_publish_paused": reg.global_publish_paused(),
+        }
+
+    @app.get("/api/projects/{project_id}/queue")
+    def queue(project_id: str, limit: int = 40) -> dict[str, Any]:
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=400, detail="limit must be 1..200")
+        try:
+            return project_queue(reg, project_id, data_dir=config.data_dir, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/sources")
+    def sources() -> dict[str, Any]:
+        rows = list_sources_for_api()
+        return {
+            "sources": rows,
+            "count": len(rows),
+            "enabled": sum(1 for row in rows if row["enabled"]),
+        }
+
+    @app.patch("/api/sources/{source_id}")
+    def patch_source(source_id: str, body: SourceEnableBody) -> dict[str, Any]:
+        try:
+            return set_source_enabled(source_id, body.enabled, data_dir=config.data_dir)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/system/publish-pause")
     def global_pause(body: GlobalPauseBody) -> dict[str, Any]:
         """Global kill switch (§56). Enabling pause requires confirm=true."""
@@ -162,4 +218,6 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
     async def unhandled(_request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
+    # default project id exposed for the GUI bootstrap
+    app.state.default_project_id = DEFAULT_PROJECT_ID
     return app

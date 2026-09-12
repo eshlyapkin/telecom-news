@@ -71,7 +71,7 @@ def test_dashboard_and_gui(client: TestClient) -> None:
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "All projects" in page.text
+    assert "Control Panel" in page.text or "Overview" in page.text
     assert "text/html" in page.headers.get("content-type", "")
 
 

@@ -61,3 +61,5 @@ data/backups/
 data/pipeline.lock
 data/*.lock
 data/projects/
+data/disabled_sources.json
+*.patch

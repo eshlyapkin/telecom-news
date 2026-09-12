@@ -395,6 +395,23 @@ _merge_catalog_sources()
 _apply_disabled_override()
 
 
+def _apply_file_disabled_override() -> None:
+    """Apply ``data/disabled_sources.json`` from the M9b GUI (best-effort).
+
+    Import-time only: if the data dir is not ready yet, skip silently. The API
+    process also calls :func:`source_overrides.apply_to_sources` on startup.
+    """
+    try:
+        from .source_overrides import apply_to_sources
+
+        apply_to_sources()
+    except OSError:
+        pass
+
+
+_apply_file_disabled_override()
+
+
 def get_source(source_id: str) -> SourceConfig | None:
     """Return the declared source by id, or None when unknown."""
     return SOURCES.get(source_id)
