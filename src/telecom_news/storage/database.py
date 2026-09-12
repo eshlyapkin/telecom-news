@@ -389,7 +389,8 @@ class Database:
             conn.execute(
                 "INSERT INTO subscribers (chat_id, username, ui_lang, status, created_at, "
                 "last_seen_at) VALUES (?, ?, ?, 'active', ?, ?) "
-                "ON CONFLICT(chat_id) DO UPDATE SET username = excluded.username, "
+                "ON CONFLICT(chat_id) DO UPDATE SET "
+                "username = COALESCE(excluded.username, subscribers.username), "
                 "last_seen_at = excluded.last_seen_at, "
                 "status = CASE WHEN subscribers.status = 'blocked' THEN 'blocked' "
                 "ELSE subscribers.status END",

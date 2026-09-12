@@ -227,16 +227,17 @@ def _handle_message(db: Database, message: dict[str, Any], *, now: datetime) -> 
 def _handle_callback(db: Database, callback: dict[str, Any], *, now: datetime) -> list[Action]:
     callback_id = str(callback.get("id") or "")
     message = callback.get("message") or {}
-    chat_id, username = _user_identity(message)
-    if not chat_id:
-        chat_id = str((callback.get("from") or {}).get("id") or "")
+    # Who pressed the button is callback["from"]. message["from"] is the bot.
+    presser = callback.get("from") if isinstance(callback.get("from"), dict) else {}
+    chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+    chat_id = str(chat.get("id") or presser.get("id") or "")
+    raw_username = presser.get("username")
+    username = str(raw_username) if raw_username else None
     if not chat_id:
         return []
     message_id = int(message.get("message_id") or 0)
     existing = db.subscriber(chat_id)
-    ui_lang = _ui_lang(
-        (callback.get("from") or {}).get("language_code"), (existing or {}).get("ui_lang")
-    )
+    ui_lang = _ui_lang(presser.get("language_code"), (existing or {}).get("ui_lang"))
     texts = UI[ui_lang]
     db.upsert_subscriber(chat_id, username=username, ui_lang=ui_lang, now=now)
 
