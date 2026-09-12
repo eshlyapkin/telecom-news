@@ -212,3 +212,44 @@ def test_diagnose_ignores_stale_errors_of_disabled_sources(
     assert code == 0
     assert "Failing sources" not in out
     assert "Disabled sources with stale errors (not counted): commlawblog, iksmedia" in out
+
+
+def test_diagnose_reports_a_stale_queue_and_points_to_prune(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """D-020: rows stored before the collect-time guard eat every LLM budget."""
+    monkeypatch.setenv("TELECOM_NEWS_DATA_DIR", str(tmp_path))
+    _set_credentials(monkeypatch)
+    db = Database(tmp_path / "news.db")
+    db.upsert_by_hash(_article(1, published_at=NOW - timedelta(days=400)))
+    db.upsert_by_hash(_article(2, published_at=NOW - timedelta(hours=1)))
+    _write_log(tmp_path, _log_text(("2026-09-11T17:45:00+00:00", ["Collected 0 article(s):"])))
+
+    code = cli._cmd_diagnose(offline=True, now=NOW)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "Queued but older than 30 day(s): 1 (prune)" in out
+    assert "prune --max-age-days 30 --dry-run" in out
+
+
+def test_diagnose_separates_stale_processed_rows_from_a_broken_publish_stage(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Old processed rows are held back on purpose, so they must not read as a failure."""
+    monkeypatch.setenv("TELECOM_NEWS_DATA_DIR", str(tmp_path))
+    _set_credentials(monkeypatch)
+    db = Database(tmp_path / "news.db")
+    db.upsert_by_hash(_article(1, published_at=NOW - timedelta(hours=200)))
+    db.save_processing_result(
+        1, relevance="relevant", category="vendor", llm_result={"summary": "s"}, status="processed"
+    )
+    _write_log(tmp_path, _log_text(("2026-09-11T17:45:00+00:00", ["Collected 0 article(s):"])))
+
+    code = cli._cmd_diagnose(offline=True, now=NOW)
+    out = capsys.readouterr().out
+
+    assert code == 0, "a freshness window is not a blocking problem"
+    assert "Processed but older than 48 h: 1 (not posted)" in out
+    assert "PUBLISH_MAX_AGE_HOURS" in out
+    assert "[BLOCK]" not in out

@@ -51,7 +51,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--dry-run", action="store_true", help="Preview Telegram posts without sending them"
     )
-    run_parser.add_argument("--limit", type=int, help="Maximum number of articles per stage")
+    run_parser.add_argument(
+        "--limit",
+        type=int,
+        help="Maximum number of articles to collect/process (not a publication cap)",
+    )
+    run_parser.add_argument(
+        "--max-posts",
+        type=int,
+        default=None,
+        help="Maximum channel posts this cycle (default: PUBLISH_MAX_PER_CYCLE, 10; 0 = no cap)",
+    )
+    run_parser.add_argument(
+        "--max-per-subscriber",
+        type=int,
+        default=None,
+        help="Maximum private messages per subscriber this cycle "
+        "(default: SUBSCRIBER_MAX_PER_CYCLE, 10; 0 = no cap)",
+    )
 
     deliver_parser = subparsers.add_parser(
         "deliver", help="Send articles to subscribers per selected language (M8)"
@@ -61,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     deliver_parser.add_argument(
         "--limit", type=int, default=None, help="Maximum messages per subscriber"
+    )
+    deliver_parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=None,
+        help="Do not deliver articles older than N hours "
+        "(default: SUBSCRIBER_MAX_AGE_HOURS, 24; 0 = deliver everything)",
     )
 
     bot_parser = subparsers.add_parser(
@@ -173,6 +197,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     publish_parser.add_argument(
         "--limit", type=int, default=None, help="Maximum number of articles to publish"
+    )
+    publish_parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=None,
+        help="Do not post articles older than N hours "
+        "(default: PUBLISH_MAX_AGE_HOURS, 48; 0 = post everything)",
+    )
+
+    prune_parser = subparsers.add_parser(
+        "prune",
+        help="Delete queued 'new' articles older than the freshness threshold (D-020)",
+    )
+    prune_parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=None,
+        help="Delete queued articles published more than N days ago "
+        "(default: TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS, 30)",
+    )
+    prune_parser.add_argument(
+        "--dry-run", action="store_true", help="List what would be deleted, delete nothing"
     )
 
     return parser
@@ -480,7 +526,7 @@ def _cmd_diagnose(
     2 = usage error.
     """
     import sqlite3
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from .config import SOURCES, load_config
     from .diagnostics import (
@@ -503,6 +549,8 @@ def _cmd_diagnose(
 
     counts: dict[str, int] = {}
     parked_errors = 0
+    stale_queue = 0
+    stale_processed = 0
     last_published_at = None
     last_published_title = ""
     oldest_new_at = None
@@ -517,13 +565,29 @@ def _cmd_diagnose(
             if last is not None:
                 last_published_at = last.published_at_telegram or last.fetched_at
                 last_published_title = last.title
+            # Age is measured the same way everywhere (D-020): the article's own
+            # publication date first, then the collection time.
             oldest_new = db.oldest_with_status("new")
             if oldest_new is not None:
-                oldest_new_at = oldest_new.fetched_at or oldest_new.published_at
+                oldest_new_at = oldest_new.published_at or oldest_new.fetched_at
             oldest_processed = db.oldest_with_status("processed")
             if oldest_processed is not None:
-                oldest_processed_at = oldest_processed.fetched_at or oldest_processed.published_at
+                oldest_processed_at = oldest_processed.published_at or oldest_processed.fetched_at
             parked_errors = db.parked_errors(max_attempts=3)
+            # Freshness windows (D-020): rows they hold back are reported, not
+            # silently parked. `prune` clears the queued ones.
+            if config.article_max_age_days > 0:
+                stale_queue = len(
+                    db.stale_articles(
+                        status="new",
+                        cutoff=moment - timedelta(days=config.article_max_age_days),
+                    )
+                )
+            if config.publish_max_age_hours > 0:
+                stale_processed = db.count_stale(
+                    status="processed",
+                    cutoff=moment - timedelta(hours=config.publish_max_age_hours),
+                )
             health = db.source_health()
         except (sqlite3.Error, OSError) as exc:
             print(f"warning: cannot read the database: {exc}", file=sys.stderr)
@@ -577,6 +641,10 @@ def _cmd_diagnose(
         failing_sources=failing,
         ignored_sources=ignored,
         parked_errors=parked_errors,
+        stale_queue=stale_queue,
+        stale_processed=stale_processed,
+        queue_max_age_days=config.article_max_age_days,
+        publish_max_age_hours=config.publish_max_age_hours,
         telegram_configured=bool(config.telegram_bot_token and config.telegram_chat_id),
         log_path=log_path,
         log_modified_at=log_modified_at,
@@ -705,20 +773,35 @@ def _cmd_process(
     return 0
 
 
-def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) -> int:
+def _cmd_publish(
+    limit: int | None,
+    dry_run: bool,
+    db_path: Path | None = None,
+    max_age_hours: float | None = None,
+) -> int:
     """Publish processed articles to the configured channel(s), one post per language.
 
     Idempotency (M8): each successful ``(chat_id, article, lang)`` send is recorded
     in ``deliveries``, so a rerun sends exactly what is still missing (for example
     a second language whose first attempt failed) and never posts twice. An article
     becomes ``published`` once every channel target has received it.
+
+    Freshness (D-020): articles older than ``PUBLISH_MAX_AGE_HOURS`` (default 48,
+    ``0`` = publish everything) are held back and reported. Without a window the
+    stage posted the oldest processed rows first, so a backlog of years-old items
+    reached the channel as "news".
     """
+    from datetime import datetime, timedelta, timezone
+
     from .config import load_config
     from .delivery.telegram import TelegramClient, TelegramError, format_post
     from .storage.database import Database
 
     if limit is not None and limit < 1:
         print(f"error: --limit must be >= 1 (got {limit}).", file=sys.stderr)
+        return 2
+    if max_age_hours is not None and max_age_hours < 0:
+        print(f"error: --max-age-hours must be >= 0 (got {max_age_hours}).", file=sys.stderr)
         return 2
     config = load_config()
     db = Database(db_path or config.db_path)
@@ -731,7 +814,11 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
             file=sys.stderr,
         )
         return 2
-    candidates = db.recent_articles(statuses=("processed", "published"))
+    max_posts = limit if limit is not None else int(config.publish_max_per_cycle)
+    window = config.publish_max_age_hours if max_age_hours is None else float(max_age_hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=window) if window > 0 else None
+    candidates = db.recent_articles(statuses=("processed", "published"), since=since)
+    held_back = db.count_stale(status="processed", cutoff=since) if since is not None else 0
     sent = db.sent_deliveries()
     tracked_articles = {article_id for _chat_id, article_id, _lang in sent}
     client = (
@@ -763,7 +850,7 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
                 db.record_delivery(str(chat_id), article.id, lang, status="sent")
             print(f"[{article.id}] already published before delivery tracking (no re-send)")
             continue
-        if limit is not None and previewed >= limit:
+        if max_posts and previewed >= max_posts:
             break
         previewed += 1
         completions: list[bool] = []
@@ -816,6 +903,13 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
         if not dry_run and completions and all(completions):
             if db.mark_published(article.id):
                 published += 1
+    if held_back:
+        print(
+            f"{held_back} processed article(s) are older than {window:g} h and stay unpublished "
+            "(PUBLISH_MAX_AGE_HOURS=0 or 'publish --max-age-hours 0' posts them anyway)."
+        )
+    if max_posts and previewed >= max_posts:
+        print(f"Cap reached: at most {max_posts} article(s) per cycle (PUBLISH_MAX_PER_CYCLE).")
     if dry_run:
         print(f"Dry run: {previewed} article(s) previewed.")
         return 0
@@ -823,8 +917,23 @@ def _cmd_publish(limit: int | None, dry_run: bool, db_path: Path | None = None) 
     return 1 if errors else 0
 
 
-def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
-    """Run one pipeline cycle across enabled sources, then process and publish."""
+def _cmd_run(
+    source_id: str | None,
+    limit: int | None,
+    dry_run: bool,
+    max_posts: int | None = None,
+    max_per_subscriber: int | None = None,
+) -> int:
+    """Run one pipeline cycle across enabled sources, then process and publish.
+
+    ``--limit`` budgets the article-processing stages (``collect``, ``process``).
+    It is deliberately NOT the publication cap: the two delivery stages have
+    their own limits (``PUBLISH_MAX_PER_CYCLE``, ``SUBSCRIBER_MAX_PER_CYCLE``),
+    overridable per run with ``--max-posts`` / ``--max-per-subscriber``. Passing
+    the processing budget through used to mean that ``run --limit 30`` could put
+    30 posts in the channel and 30 private messages per subscriber in one
+    15-minute cycle (D-020).
+    """
     from .config import SOURCES
 
     source_ids = (
@@ -839,19 +948,28 @@ def _cmd_run(source_id: str | None, limit: int | None, dry_run: bool) -> int:
             collection_failed = True
 
     process_code = _cmd_process(limit)
-    publish_code = _cmd_publish(limit, dry_run)
-    deliver_code = _cmd_deliver(limit, dry_run)
+    publish_code = _cmd_publish(max_posts, dry_run)
+    deliver_code = _cmd_deliver(max_per_subscriber, dry_run)
     failed = collection_failed or process_code != 0 or publish_code != 0 or deliver_code != 0
     return 1 if failed else 0
 
 
-def _cmd_deliver(limit: int | None, dry_run: bool, db_path: Path | None = None) -> int:
+def _cmd_deliver(
+    limit: int | None,
+    dry_run: bool,
+    db_path: Path | None = None,
+    max_age_hours: float | None = None,
+) -> int:
     """Send processed articles to subscribers, one message per selected language.
 
     Renditions for languages nobody publishes to a channel are generated lazily
     here and cached in ``renditions`` (M8). Failures are recorded, retried in the
     next cycle (up to ``SUBSCRIBER_MAX_ATTEMPTS``) and never duplicate a message
     that already went out.
+
+    ``limit`` is the per-subscriber cap for THIS invocation; when it is None the
+    configured ``SUBSCRIBER_MAX_PER_CYCLE`` applies (D-020: ``run --limit`` no
+    longer overrides it).
     """
     from datetime import datetime, timedelta, timezone
 
@@ -865,24 +983,28 @@ def _cmd_deliver(limit: int | None, dry_run: bool, db_path: Path | None = None) 
     if limit is not None and limit < 1:
         print(f"error: --limit must be >= 1 (got {limit}).", file=sys.stderr)
         return 2
+    if max_age_hours is not None and max_age_hours < 0:
+        print(f"error: --max-age-hours must be >= 0 (got {max_age_hours}).", file=sys.stderr)
+        return 2
     config = load_config()
     db = Database(db_path or config.db_path)
     subscribers = db.subscribers_with_languages()
     if not subscribers:
         print("No active subscribers yet — start the bot and press /start.")
         return 0
+    window = config.subscriber_max_age_hours if max_age_hours is None else float(max_age_hours)
     now = datetime.now(timezone.utc)
     articles = db.recent_articles(
         statuses=("processed", "published"),
-        since=now - timedelta(hours=config.subscriber_max_age_hours),
+        since=now - timedelta(hours=window) if window > 0 else None,
     )
-    max_per_user = limit if limit is not None else config.subscriber_max_per_cycle
+    max_per_user = limit if limit is not None else int(config.subscriber_max_per_cycle)
     plans = plan_deliveries(
         articles,
         subscribers,
         db.sent_deliveries(),
         now=now,
-        max_age_hours=config.subscriber_max_age_hours,
+        max_age_hours=window,
         max_per_user=max_per_user,
         max_attempts=int(config.subscriber_max_attempts),
         attempts_of=lambda chat_id, article_id, lang: db.failed_delivery_attempts(
@@ -892,6 +1014,10 @@ def _cmd_deliver(limit: int | None, dry_run: bool, db_path: Path | None = None) 
     if not plans:
         print("Nothing to deliver.")
         return 0
+    capped = max_per_user > 0 and any(
+        sum(1 for plan in plans if plan.chat_id == chat_id) >= max_per_user
+        for chat_id in subscribers
+    )
     if not dry_run and not config.telegram_bot_token:
         print("error: TELEGRAM_BOT_TOKEN is required (or use --dry-run).", file=sys.stderr)
         return 2
@@ -960,6 +1086,11 @@ def _cmd_deliver(limit: int | None, dry_run: bool, db_path: Path | None = None) 
                 f"warning: article id={article_id} -> {plan.chat_id} ({plan.lang}): {exc}",
                 file=sys.stderr,
             )
+    if capped:
+        print(
+            f"Cap reached: at most {max_per_user} message(s) per subscriber per cycle "
+            "(SUBSCRIBER_MAX_PER_CYCLE; the rest waits for the next cycle)."
+        )
     if dry_run:
         print(f"Dry run: {len(plans)} message(s) planned.")
         return 0
@@ -1050,6 +1181,57 @@ def _cmd_recover(limit: int | None = None, max_attempts: int = 3) -> int:
             f"{parked} article(s) stay in 'error': they reached the retry limit "
             f"({max_attempts or 3}). Inspect them and reset manually if needed."
         )
+    return 0
+
+
+def _cmd_prune(
+    max_age_days: int | None = None, dry_run: bool = False, db_path: Path | None = None
+) -> int:
+    """Delete queued articles that are too old to ever be published (D-020).
+
+    Since D-017 ``collect`` refuses items older than
+    ``TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS``, but rows stored *before* that guard
+    are still in the queue: ``process`` takes the oldest ``new`` rows first, so
+    the model spends its budget on news from 2021–2025 and ``publish`` (also
+    oldest-first) would post them into the channel as fresh news.
+
+    Only status ``new`` is touched — ``skipped``/``published`` rows are the
+    deduplication memory and the audit trail — and rows without a publication
+    date are kept, because a missing date is not proof of old age. Pruned items
+    cannot come back: the collect-time guard drops them again on the next fetch.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from .config import load_config
+    from .storage.database import Database
+
+    config = load_config()
+    days = config.article_max_age_days if max_age_days is None else max_age_days
+    if days <= 0:
+        print(
+            f"error: --max-age-days must be >= 1 (got {days}); "
+            "TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS=0 disables the collect-time guard, "
+            "so pass the threshold for prune explicitly.",
+            file=sys.stderr,
+        )
+        return 2
+    db = Database(db_path or config.db_path)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stale = db.stale_articles(status="new", cutoff=cutoff)
+    if not stale:
+        print(f"No queued article is older than {days} day(s); nothing to prune.")
+        return 0
+    for article in stale[:10]:
+        moment = article.published_at.isoformat() if article.published_at else "?"
+        title = (article.title or "(no title)").strip()[:60]
+        print(f"  [{article.id}] {article.source_id} {moment} — {title}")
+    if len(stale) > 10:
+        print(f"  ... and {len(stale) - 10} more")
+    if dry_run:
+        print(f"Dry run: {len(stale)} queued article(s) would be deleted.")
+        return 0
+    deleted = db.delete_articles([article.id for article in stale if article.id is not None])
+    print(f"Pruned {deleted} queued article(s) older than {days} day(s).")
     return 0
 
 
@@ -1211,7 +1393,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "run":
-        return _cmd_run(args.source, args.limit, args.dry_run)
+        return _cmd_run(
+            args.source,
+            args.limit,
+            args.dry_run,
+            max_posts=args.max_posts,
+            max_per_subscriber=args.max_per_subscriber,
+        )
     if args.command == "sources":
         if args.sources_command == "import":
             return _cmd_sources_import(args.csv, args.output, args.dry_run)
@@ -1224,6 +1412,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_diagnose(runs=args.runs, offline=args.offline, as_json=args.json)
     if args.command == "recover":
         return _cmd_recover(args.limit, args.max_attempts)
+    if args.command == "prune":
+        return _cmd_prune(args.max_age_days, args.dry_run)
     if args.command == "backup":
         return _cmd_backup(args.output, args.keep_days)
     if args.command == "restore":
@@ -1233,9 +1423,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "process":
         return _cmd_process(args.limit)
     if args.command == "publish":
-        return _cmd_publish(args.limit, args.dry_run)
+        return _cmd_publish(args.limit, args.dry_run, max_age_hours=args.max_age_hours)
     if args.command == "deliver":
-        return _cmd_deliver(args.limit, args.dry_run)
+        return _cmd_deliver(args.limit, args.dry_run, max_age_hours=args.max_age_hours)
     if args.command == "bot":
         return _cmd_bot(args.once, args.poll_timeout)
 

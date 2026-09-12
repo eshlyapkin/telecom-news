@@ -112,6 +112,7 @@ python -m telecom_news diagnose        # почему ничего не публ
 python -m telecom_news sources            # каталог источников; --verify проверит ленты
 python -m telecom_news deliver --dry-run   # предпросмотр рассылки подписчикам (M8)
 python -m telecom_news bot --once          # обработать команды /start и /language (M8)
+python -m telecom_news prune --dry-run     # старые статьи в очереди (D-020)
 
 # Тесты
 pytest

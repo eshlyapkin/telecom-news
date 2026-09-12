@@ -31,8 +31,14 @@ class DeliveryPlan:
 
 
 def article_moment(article: Article) -> datetime | None:
-    """Best available timestamp of an article (publication beats collection)."""
-    return article.published_at_telegram or article.published_at or article.fetched_at
+    """Best available timestamp of an article (publication beats collection).
+
+    The order mirrors ``storage.database.FRESHNESS_SQL`` (D-020): the article's
+    own publication date decides its age, then the moment we posted it, then the
+    collection time. ``published_at`` must win over ``fetched_at`` — a feed that
+    serves a 2022 entry today has a fresh collection time but is still old news.
+    """
+    return article.published_at or article.published_at_telegram or article.fetched_at
 
 
 def plan_deliveries(
@@ -46,8 +52,14 @@ def plan_deliveries(
     max_attempts: int = 3,
     attempts_of: Callable[[str, int, str], int] | None = None,
 ) -> list[DeliveryPlan]:
-    """Message plan for one delivery cycle (see module docstring)."""
-    cutoff = now - timedelta(hours=max(max_age_hours, 0.0))
+    """Message plan for one delivery cycle (see module docstring).
+
+    ``max_age_hours <= 0`` disables the freshness window and ``max_per_user <= 0``
+    disables the per-subscriber cap — the same "0 switches the guard off"
+    convention as ``TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS`` (D-017/D-020).
+    """
+    cutoff = now - timedelta(hours=max_age_hours) if max_age_hours > 0 else None
+    per_user_cap = max_per_user if max_per_user > 0 else None
     attempts_lookup = attempts_of or (lambda chat_id, article_id, lang: 0)
     plans: list[DeliveryPlan] = []
     for chat_id in sorted(subscribers):
@@ -56,13 +68,13 @@ def plan_deliveries(
             continue
         taken = 0
         for article in articles:
-            if article.id is None or taken >= max_per_user:
+            if article.id is None or (per_user_cap is not None and taken >= per_user_cap):
                 break
             moment = article_moment(article)
-            if moment is not None and moment < cutoff:
+            if cutoff is not None and moment is not None and moment < cutoff:
                 continue
             for lang in langs:
-                if taken >= max_per_user:
+                if per_user_cap is not None and taken >= per_user_cap:
                     break
                 key = (str(chat_id), int(article.id), lang)
                 if key in sent:

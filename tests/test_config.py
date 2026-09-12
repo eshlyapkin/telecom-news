@@ -220,3 +220,42 @@ def test_disabled_sources_env_forces_them_off(monkeypatch) -> None:
     finally:
         config_module.SOURCES.clear()
         config_module.SOURCES.update(original)
+
+
+def test_publication_caps_default_and_env_override(monkeypatch) -> None:
+    """D-020: channel caps live in the config, not in `run --limit`."""
+    for name in ("PUBLISH_MAX_PER_CYCLE", "PUBLISH_MAX_AGE_HOURS"):
+        monkeypatch.delenv(name, raising=False)
+    config = load_config()
+    assert config.publish_max_per_cycle == 10
+    assert config.publish_max_age_hours == 48.0
+
+    monkeypatch.setenv("PUBLISH_MAX_PER_CYCLE", "3")
+    monkeypatch.setenv("PUBLISH_MAX_AGE_HOURS", "12")
+    config = load_config()
+    assert config.publish_max_per_cycle == 3
+    assert isinstance(config.publish_max_per_cycle, int)
+    assert config.publish_max_age_hours == 12.0
+
+    # 0 switches a guard off, the same convention as the collect-time threshold.
+    monkeypatch.setenv("PUBLISH_MAX_PER_CYCLE", "0")
+    monkeypatch.setenv("PUBLISH_MAX_AGE_HOURS", "0")
+    config = load_config()
+    assert config.publish_max_per_cycle == 0
+    assert config.publish_max_age_hours == 0.0
+
+    # An unparsable value is ignored, so the default survives a typo.
+    monkeypatch.setenv("PUBLISH_MAX_PER_CYCLE", "junk")
+    monkeypatch.setenv("PUBLISH_MAX_AGE_HOURS", "junk")
+    config = load_config()
+    assert config.publish_max_per_cycle == 10
+    assert config.publish_max_age_hours == 48.0
+
+
+def test_subscriber_counters_stay_integers(monkeypatch) -> None:
+    monkeypatch.setenv("SUBSCRIBER_MAX_PER_CYCLE", "5")
+    monkeypatch.setenv("SUBSCRIBER_MAX_ATTEMPTS", "2")
+    config = load_config()
+    assert config.subscriber_max_per_cycle == 5
+    assert isinstance(config.subscriber_max_per_cycle, int)
+    assert config.subscriber_max_attempts == 2

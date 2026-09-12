@@ -157,3 +157,86 @@ def test_deliver_without_subscribers_is_a_noop(tmp_path: Path, monkeypatch, caps
 
     assert cli._cmd_deliver(None, False, db_path=path) == 0
     assert "No active subscribers" in capsys.readouterr().out
+
+
+# --- per-subscriber cap and freshness window (D-020) ------------------------
+
+
+def _seed_fresh(tmp_path: Path, count: int, *, hours_ago: float = 1.0) -> Database:
+    db = Database(tmp_path / "news.db")
+    for n in range(1, count + 1):
+        moment = NOW - timedelta(hours=hours_ago)
+        article = Article(
+            url=f"https://example.com/{n}",
+            source_id="test",
+            title=f"A2P messaging deal {n}",
+            body="body",
+            category="vendor",
+            content_hash=f"hash-{n:04d}",
+            published_at=moment,
+            fetched_at=moment,
+            llm_result={"summary": "Русское саммари", "summary_language": "ru"},
+        )
+        db.upsert_by_hash(article)
+        db.set_status(n, "processed")
+    db.upsert_subscriber("100", username="tester", ui_lang="ru")
+    db.set_subscriber_languages("100", ["ru"])
+    return db
+
+
+def test_deliver_uses_the_configured_cap_when_run_passes_none(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """`run --limit 30` must not become 30 private messages in one cycle."""
+    path = tmp_path / "news.db"
+    db = _seed_fresh(tmp_path, 5)
+    _patch(monkeypatch)
+    monkeypatch.setenv("SUBSCRIBER_MAX_PER_CYCLE", "2")
+
+    assert cli._cmd_deliver(None, False, db_path=path) == 0
+
+    assert len(_FakeTelegram.sent) == 2
+    out = capsys.readouterr().out
+    assert "Cap reached: at most 2 message(s) per subscriber per cycle" in out
+    assert len(db.sent_deliveries()) == 2
+
+
+def test_deliver_cap_zero_means_no_cap(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "news.db"
+    _seed_fresh(tmp_path, 4)
+    _patch(monkeypatch)
+    monkeypatch.setenv("SUBSCRIBER_MAX_PER_CYCLE", "0")
+
+    assert cli._cmd_deliver(None, False, db_path=path) == 0
+    assert len(_FakeTelegram.sent) == 4
+
+
+def test_deliver_skips_articles_outside_the_freshness_window(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    path = tmp_path / "news.db"
+    _seed_fresh(tmp_path, 2, hours_ago=72.0)
+    _patch(monkeypatch)
+
+    assert cli._cmd_deliver(None, False, db_path=path) == 0
+
+    assert _FakeTelegram.sent == []
+    assert "Nothing to deliver" in capsys.readouterr().out
+
+
+def test_deliver_window_can_be_widened_per_run(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "news.db"
+    _seed_fresh(tmp_path, 2, hours_ago=72.0)
+    _patch(monkeypatch)
+
+    assert cli._cmd_deliver(None, False, db_path=path, max_age_hours=96) == 0
+    assert len(_FakeTelegram.sent) == 2
+
+
+def test_deliver_rejects_a_negative_window(tmp_path: Path, monkeypatch, capsys) -> None:
+    path = tmp_path / "news.db"
+    _seed_fresh(tmp_path, 1)
+    _patch(monkeypatch)
+
+    assert cli._cmd_deliver(None, True, db_path=path, max_age_hours=-1) == 2
+    assert "--max-age-hours must be >= 0" in capsys.readouterr().err
