@@ -60,3 +60,4 @@ docs/telegram_bot_details.txt
 data/backups/
 data/pipeline.lock
 data/*.lock
+data/projects/

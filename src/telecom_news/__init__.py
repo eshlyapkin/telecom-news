@@ -1,9 +1,8 @@
 """telecom-news: daily monitoring and publishing of SMS/messaging industry news.
 
-M0 Foundation: package skeleton, domain model ``Article``, minimal
-configuration, stdlib logging setup and a CLI entry point (``python -m
-telecom_news``). Collectors, storage, LLM and delivery layers are added in
-later milestones (see docs/ROADMAP.md).
+CLI pipeline (M0–M8, D-020) plus multi-project foundation (M9a / D-021):
+project registry, optional FastAPI GUI. See ``docs/ROADMAP.md`` and
+``docs/VISION_MULTI_PROJECT.md``.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
