@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telecom-news"
-version = "0.1.0"
+version = "0.2.0"
 description = "Daily monitoring and publishing of SMS/messaging industry news (sources -> collect -> normalize -> storage/dedup -> LLM (LM Studio) -> Telegram). MVP interface: CLI."
 readme = "README.md"
 requires-python = ">=3.10"
