@@ -63,3 +63,5 @@ data/*.lock
 data/projects/
 data/disabled_sources.json
 *.patch
+m9b-files.zip*
+*:Zone.Identifier
