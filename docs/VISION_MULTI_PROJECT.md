@@ -185,6 +185,7 @@ M9a only persists **Project** in the registry file. Legacy articles stay in the 
 ## 5. Security notes
 
 - M9a API has **no authentication**. Bind to `127.0.0.1` by default; document risk if exposed.
+- Default listen port is **8765** (`python -m telecom_news serve`), not 8000 (often occupied). Override with `--port` or `TELECOM_NEWS_SERVE_PORT`.
 - Never put Telegram tokens in project JSON; reference env / secret store.
 - Cost metrics (§59): show only backend-provided numbers — never fabricate.
 

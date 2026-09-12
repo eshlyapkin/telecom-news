@@ -251,7 +251,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument(
         "--host", default="127.0.0.1", help="Bind address (default localhost)"
     )
-    serve_parser.add_argument("--port", type=int, default=8000, help="TCP port")
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="TCP port (default 8765 or TELECOM_NEWS_SERVE_PORT; avoid 8000 if busy)",
+    )
     serve_parser.add_argument("--reload", action="store_true", help="Dev auto-reload (uvicorn)")
 
     return parser
@@ -1411,8 +1416,14 @@ def _cmd_projects(args: argparse.Namespace) -> int:
     return 2
 
 
-def _cmd_serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> int:
-    """Start FastAPI multi-project API + GUI (optional ``.[api]`` extra)."""
+def _cmd_serve(host: str = "127.0.0.1", port: int | None = None, reload: bool = False) -> int:
+    """Start FastAPI multi-project API + GUI (optional ``.[api]`` extra).
+
+    Default port is **8765** (not 8000 — that port is often taken by other local
+    apps). Override with ``--port`` or ``TELECOM_NEWS_SERVE_PORT``.
+    """
+    import os
+
     try:
         import uvicorn
     except ImportError:
@@ -1420,6 +1431,22 @@ def _cmd_serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) 
             "error: API dependencies missing. Install with: pip install -e '.[api]'",
             file=sys.stderr,
         )
+        return 2
+    if port is None:
+        raw = os.environ.get("TELECOM_NEWS_SERVE_PORT", "").strip()
+        if raw:
+            try:
+                port = int(raw)
+            except ValueError:
+                print(
+                    f"error: TELECOM_NEWS_SERVE_PORT must be an int (got {raw!r}).",
+                    file=sys.stderr,
+                )
+                return 2
+        else:
+            port = 8765
+    if port < 1 or port > 65535:
+        print(f"error: --port must be 1..65535 (got {port}).", file=sys.stderr)
         return 2
     if host not in ("127.0.0.1", "localhost", "::1") and host != "0.0.0.0":
         print(

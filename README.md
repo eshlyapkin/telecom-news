@@ -119,7 +119,7 @@ python -m telecom_news projects dashboard
 
 # Optional multi-project API + GUI (M9a; localhost, no auth)
 pip install -e '.[api]'
-python -m telecom_news serve               # http://127.0.0.1:8000/
+python -m telecom_news serve               # http://127.0.0.1:8765/
 
 # Тесты
 pytest
