@@ -8,7 +8,7 @@
 
 ## Возможности
 
-- Сбор новостей из множества источников (63 источника в реестре, из них 59 включено)
+- Сбор новостей из реестра источников: RSS/Atom-ленты и карты сайта для изданий без ленты
 - Дедупликация и фильтрация контента
 - Категоризация по темам (5G, оптика, IoT, операторы, оборудование)
 - Хранение истории публикаций
@@ -18,7 +18,11 @@
 - Бот с подписками: пользователь выбирает языки при подключении, меняет их в любой момент и может получать несколько языков одновременно
 - CLI для ручного запуска pipeline, отладки и dry-run
 - Multi-project registry (M9a): несколько Project в одном GUI/API; default = текущий SMS pipeline
-- HTTP API + minimal GUI (FastAPI) — **опционально** (`pip install -e '.[api]'`), use case confirmed (D-021 / VISION §§40–70)
+- HTTP API + панель управления (FastAPI) — **опционально** (`pip install -e '.[api]'`), use case confirmed (D-021 / VISION §§40–70)
+- Панель: паузы, очередь, опубликованные посты с предпросмотром, добавление/удаление источников,
+  языки канала на лету, редактор правил релевантности, запуск цикла вручную
+- Автопоиск новых источников: темы берутся из правил релевантности, кандидаты предлагаются
+  оператору с историей проверок; в пайплайн ничего не попадает без явного подтверждения
 
 ## Архитектура
 
@@ -54,38 +58,28 @@
    - Отладка и dry-run
    - Служебные команды
 
-> **HTTP API (FastAPI)** не входит в обязательный MVP. Целевая система на MVP — фоновый pipeline: источники → сбор → нормализация → хранение/дедупликация → LLM (LM Studio) → подготовка публикации → Telegram. FastAPI добавляется только при появлении подтверждённого use case для HTTP API.
+> **HTTP API (FastAPI)** не входил в обязательный MVP и остаётся опциональным extra
+> (`pip install -e '.[api]'`). Use case подтверждён в D-021, панель реализована в M9a–M11
+> и работает только на 127.0.0.1 без аутентификации.
 
 ## Структура проекта
 
-Текущее состояние — **M4 Telegram Publishing реализован**: M1–M3 плюс Telegram Bot API, HTML-форматирование, `publish --dry-run`, retry и атомарный статус `published`. Живая отправка в канал требует `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`; без них проверяется через dry-run и моки.
+Актуальная раскладка пакета описана в **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §4**
+и не дублируется здесь, чтобы две копии не разошлись. Верхний уровень:
 
 ```
 telecom-news/
-├── README.md
-├── .gitignore
-├── .editorconfig
-├── pyproject.toml              # Конфигурация Python-проекта (src-layout; runtime: httpx, feedparser; dev: pytest, ruff)
-├── .githooks/                  # pre-commit (diff--check + ruff), pre-push (pytest)
-├── scripts/setup.sh            # One-shot dev setup: .venv + install + хуки
-├── src/
-│   └── telecom_news/
-│       ├── __init__.py         # Версия пакета
-│       ├── __main__.py         # python -m telecom_news
-│       ├── cli.py              # CLI: collect, status, process, publish; run — заглушка до M5
-│       ├── delivery/            # Telegram Bot API delivery
-│       ├── config.py           # Конфигурация: пути, БД, LM Studio, log level, источники + env
-│       ├── logging_config.py   # Настройка stdlib logging
-│       ├── models.py           # Доменная модель Article
-│       ├── collectors/         # base.py (RawItem, fetch+retry), rss.py (RSS-коллектор)
-│       ├── llm/                # client.py (LM Studio HTTP-клиент)
-│       ├── processors/         # normalize.py, dedup.py, relevance.py, summarize.py
-│       └── storage/            # database.py (SQLite, CRUD, статусы)
-├── tests/                      # pytest, unit/integration mocks (без реальной сети/продовой БД)
-├── data/                       # Локальные данные (не в git): news.db
-│   └── .gitkeep
-└── docs/                       # Документация (ARCHITECTURE.md, ROADMAP.md, DEVELOPMENT.md и др.)
+├── AGENTS.md / CLAUDE.md       # правила работы для AI-ассистентов
+├── pyproject.toml              # src-layout; runtime: httpx, feedparser; extras: dev, api
+├── .githooks/                  # pre-commit (секреты + ruff), pre-push (pytest)
+├── scripts/                    # setup.sh, run_pipeline.sh, run_discovery.sh, check_secrets.sh
+├── src/telecom_news/           # пакет (см. ARCHITECTURE §4)
+├── tests/                      # pytest; conftest.py изолирует данные и окружение
+├── data/                       # не в git: news.db, logs/, операторские настройки
+└── docs/                       # CURRENT (состояние), DECISIONS, ARCHITECTURE, ROADMAP, SKILLS/
 ```
+
+Состояние проекта — **[docs/CURRENT.md](docs/CURRENT.md)**, раздел STATE.
 
 ## Требования
 
@@ -95,11 +89,15 @@ telecom-news/
 
 ## Быстрый старт
 
+Одной командой: `scripts/setup.sh` создаёт `.venv`, ставит пакет с extras,
+включает git-хуки (`core.hooksPath .githooks`) и прогоняет тесты. Вручную:
+
 ```bash
 # Project-local окружение (системный Python не используется)
 python3 -m venv .venv          # или: uv venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"         # dev-зависимости: pytest, ruff
+pip install -e ".[dev,api]"     # dev: pytest, ruff | api: панель управления
+git config core.hooksPath .githooks
 
 # Проверка CLI (M5: run выполняет collect/process/publish)
 python -m telecom_news --help
@@ -117,16 +115,26 @@ python -m telecom_news bot --once          # обработать команды
 python -m telecom_news prune --dry-run     # старые статьи в очереди (D-020)
 python -m telecom_news projects list       # multi-project registry (M9a)
 python -m telecom_news projects dashboard
+python -m telecom_news discover --list     # предложенные источники (ничего не добавляет)
+python -m telecom_news discover --history  # где поиск уже был и когда вернётся
 
-# Optional multi-project API + GUI (M9a; localhost, no auth)
-pip install -e '.[api]'
+# Панель управления (localhost, без аутентификации)
 python -m telecom_news serve               # http://127.0.0.1:8765/
 
 # Тесты
 pytest
 ```
 
-> HTTP API/GUI — optional extra `.[api]` (D-021). Default bind is localhost; M9a has no authentication. Full multi-project vision: `docs/VISION_MULTI_PROJECT.md`.
+> Панель — optional extra `.[api]` (D-021), слушает только localhost и не имеет
+> аутентификации. Что делает каждая вкладка: `docs/SKILLS/control-panel.md`.
+> Поиск источников: `docs/SKILLS/source-discovery.md`.
+> Полное видение multi-project: `docs/VISION_MULTI_PROJECT.md`.
+
+## Для AI-ассистентов
+
+Правила работы над проектом — **[AGENTS.md](AGENTS.md)** (читается любым
+ассистентом; `CLAUDE.md` ссылается на него). Состояние — `docs/CURRENT.md`,
+раздел STATE. Обоснование решений — `docs/DECISIONS.md`.
 
 ## Лицензия
 

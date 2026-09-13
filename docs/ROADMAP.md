@@ -1,16 +1,31 @@
 # ROADMAP — telecom-news
 
-> Статус: planning. Документ завершает planning-стадию вместе с `ARCHITECTURE.md`.
-> **Planning — отдельная предварительная стадия, НЕ M0.** Planning завершён созданием ARCHITECTURE.md и ROADMAP.md.
-> M0 (Foundation) ещё не начат и стартует только после явного подтверждения пользователя.
+> Область работ и критерии приёмки по вехам. **Фактическое состояние проекта —
+> `docs/CURRENT.md`, раздел STATE**; этот документ описывает, что в веху входило,
+> а не что сейчас запущено. Описания вех ниже сохранены как исходные — там, где
+> реализация разошлась с планом, решение записано в `docs/DECISIONS.md`.
 
 ## Стадии
 
 | Стадия | Статус |
 |---|---|
-| Planning (система памяти, MVP-архитектура, ARCHITECTURE.md, ROADMAP.md) | завершён этим документом |
-| M0 — Foundation | не начат (ждёт подтверждения) |
-| M1–M7 | см. ниже |
+| Planning — память проекта, MVP-архитектура | завершён |
+| M0 — Foundation | завершён |
+| M1 — One News Source | завершён |
+| M2 — Storage and Deduplication | завершён |
+| M3 — LLM Processing | завершён |
+| M4 — Telegram Publishing | завершён |
+| M5 — Automation | завершён (расписание внешнее: `scripts/run_pipeline.sh`) |
+| M6 — Multiple Sources | завершён |
+| M7 — Hardening | завершён |
+| M8 — Языки публикации и подписки | завершён |
+| M9a — Multi-project foundation + API/GUI | завершён (D-021) |
+| M9b — Панель: паузы, очередь, переключатели источников | завершён |
+| M9c — Run now + редактор AI rules | завершён |
+| M9d — Добавление/удаление источников, общий канал RU+EN | завершён (D-022) |
+| M10 — Переведённые заголовки, вкладка Published, автопоиск источников | завершён (D-024) |
+| M11 — Источники типа «карта сайта», герметичные тесты, история поиска | завершён (D-026…D-029) |
+| M12+ — см. `docs/VISION_MULTI_PROJECT.md` §3 | не начат |
 
 Каждый milestone заканчивается **рабочим и проверяемым** состоянием проекта. Milestones реализуются по одному, без объединения.
 
@@ -33,6 +48,8 @@
 **Явно НЕ входит:** httpx; feedparser; реальный RSS/API collector; SQLite; LM Studio; Telegram; scheduler; scraping; FastAPI.
 
 **Ожидаемые файлы:** `pyproject.toml`, `src/telecom_news/{__init__,main,config,logging_setup,models}.py`, `tests/test_smoke.py`.
+> Фактически: CLI собран в `cli.py` (argparse), логирование — `logging_config.py`;
+> `main.py` и `logging_setup.py` удалены как мёртвый код (D-030). Текущая раскладка — ARCHITECTURE §4.
 
 **Зависимости:** завершение planning (это первый milestone).
 
@@ -183,6 +200,8 @@
 **Явно НЕ входит:** distributed workers, очереди.
 
 **Ожидаемые файлы:** `scheduler.py`, обновление CLI (`run`), документация exit codes в README.
+> Фактически: встроенного планировщика нет. Расписание внешнее —
+> `scripts/run_pipeline.sh` из Windows Task Scheduler (и `scripts/run_discovery.sh` для поиска источников).
 
 **Зависимости:** M4.
 

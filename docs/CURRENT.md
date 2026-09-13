@@ -3,6 +3,103 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+**Read this section, then stop.** The session log below is history: consult one
+entry only when you need the reasoning behind a specific area. `AGENTS.md` (repo root)
+holds the working rules, `docs/DECISIONS.md` the reasoning of record.
+
+---
+
+## STATE (as of 2026-09-13)
+
+**What it is.** A pipeline that monitors SMS/messaging industry news: collect →
+process (local LLM through LM Studio: relevance, headline, summary) → publish to
+a Telegram channel → deliver to bot subscribers. CLI is the primary interface; a
+local control panel (FastAPI) is an optional extra.
+
+**Where it runs** (operator's machine, WSL): repo at `~/Projects/telecom-news`,
+venv `.venv`, package version **0.7.0**, systemd user unit
+`telecom-news-serve` on 127.0.0.1:8765, bot as a separate process, pipeline every
+15 minutes from Windows Task Scheduler via `scripts/run_pipeline.sh`.
+
+**Verify state, never assume it:**
+
+```bash
+git log -3 --oneline && git status -sb
+.venv/bin/python -m pytest -q                      # expect: all green, no env tricks
+.venv/bin/python -c "import telecom_news; print(telecom_news.__version__)"
+curl -s http://127.0.0.1:8765/api/health           # version, langs, channel targets
+.venv/bin/python -m telecom_news diagnose          # LM Studio, Telegram, bot, queue
+```
+
+**Interfaces**
+
+| Surface | Entry point |
+|---|---|
+| Pipeline | `python -m telecom_news run\|collect\|process\|publish\|deliver` |
+| Sources | `sources`, `discover` (`--list`, `--history`, `--accept`, `--dismiss`) |
+| Ops | `status`, `doctor`, `diagnose`, `recover`, `prune`, `backup`, `restore` |
+| Bot | `bot` (long polling; `/start`, `/language`) |
+| Panel | `serve` → Overview / Queue / Published / Sources / Discovery / AI rules |
+
+**What the operator controls from the panel** (each writes a file in `data/`,
+picked up by the next cycle without a restart — see ARCHITECTURE §6):
+publication languages, publish pause, source add/delete/enable, AI relevance
+rules, discovery topics and re-check period, one-off pipeline runs.
+
+**Load-bearing rules** (each cost an incident; full reasoning in DECISIONS):
+
+- The classifier's JSON contract is code-owned and appended to every prompt; the
+  AI-rules editor holds **editorial policy only** (D-023).
+- Operator term lists **widen** the built-in ones, never replace them (D-022).
+- Discovery scores a candidate by **headlines**, not full text (D-024).
+- News-search results supply **publishers**, never articles (D-025).
+- `data/` holds live operator settings. Never edit them to test — point
+  `TELECOM_NEWS_DATA_DIR` at a scratch directory instead.
+- Tests are hermetic (`tests/conftest.py`): plain `pytest -q` and plain
+  `git push` work in any shell (D-026).
+
+**Known gaps**
+
+- Outlets whose sitemap carries no dates stay unreachable (telecompaper.com).
+- Google News RSS is not a documented API; if it stops answering, discovery
+  degrades to link-following rather than failing.
+- The panel has no authentication — it binds 127.0.0.1 only (D-021).
+- `docs/TECHNICAL_SPEC.md` describes a superseded M0; ARCHITECTURE §4 is the
+  current structure.
+
+---
+
+## Session 2026-09-13 (M12): documentation brought back to the repository
+
+See D-030. The documentation had drifted far enough to mislead: `PROJECT_STATE.md`
+and `SESSION_HANDOFF.md`, last touched on 21 August, said "M0 not started, no code
+at all" while the package was at 0.7.0 with 430 tests; `AI_WORKFLOW.md` told a new
+session to stop unless the project root was `/mnt/c/Working/...`, a path that does
+not exist; ARCHITECTURE §4 described `main.py` and "the `api/` directory is not
+created"; `scripts/setup.sh` skipped the `api` extra, without which `serve` fails
+on import.
+
+- **One set of rules.** `AGENTS.md` is it, written for any assistant; `CLAUDE.md`
+  and `AI_WORKFLOW.md` point at it. It gained: orientation order, "the operator's
+  data is live", the invariants that each cost an incident, the hermetic-test
+  contract, outward-facing actions, and the hooks.
+- **`CURRENT.md` opens with STATE** — what this is, where it runs, the commands
+  that verify it rather than assume it, what the panel controls, the load-bearing
+  rules, the known gaps. The session log below is history.
+- **ARCHITECTURE** §4 is now the real package tree, §6 the three configuration
+  layers with the table of operator files, plus components 3.15–3.17 for the
+  panel, the operator rules and discovery.
+- **New runbooks:** `docs/SKILLS/control-panel.md` and
+  `docs/SKILLS/source-discovery.md`.
+- `TEST_SPEC.md` written, `TECHNICAL_SPEC.md` marked historical, ROADMAP given
+  milestone statuses, the stale two documents deleted.
+- **Dead code removed:** `main.py` (imported by nothing, and its placeholder
+  printed "Not implemented" for `run` and `status` — actively misleading) and
+  `logging_setup.py` (a second logging module used only by its own test).
+
+`pytest -q` → **430 passed**; `--help` and the API import verified after the
+deletions.
+
 ## Session 2026-09-13 (M11d): the re-check period is the operator's to set
 
 **Sites already probed** gained a **next check** column — "in 12 days" or "due
@@ -736,13 +833,11 @@ LM Studio OK (`qwen3-vl-8b-instruct`), Telegram OK (`@sms_telecom_news_bot`).
 - Repeated-error notifications — not implemented.
 - Cadence: cron runs every 15 minutes, ROADMAP M5 states a daily cycle. Decide
   whether 15 minutes is intended; at that rate `skipped` items also cost LLM calls.
-- Documentation debt: `docs/PROJECT_STATE.md` and `docs/SESSION_HANDOFF.md` still
-  describe the end of planning («M0 not started, no code at all»), `docs/ROADMAP.md`
-  carries no milestone statuses, `docs/TECHNICAL_SPEC.md` specifies a superseded
-  M0 (click CLI in `main.py`), `docs/TEST_SPEC.md` is a 3-line stub. Dead code from
-  that superseded spec is still shipped: `src/telecom_news/main.py` (imported by
-  nothing) and `logging_setup.py` (used only by its own test; the CLI uses
-  `logging_config.py`).
+- Documentation debt (resolved 2026-09-13, see the M12 entry): the stale
+  `PROJECT_STATE.md` / `SESSION_HANDOFF.md` were removed, `TEST_SPEC.md` was
+  written, and the dead `main.py` / `logging_setup.py` were deleted.
+  `docs/TECHNICAL_SPEC.md` still describes the superseded M0 and is now marked as
+  historical at the top.
 - `AGENTS.md` states the project root as `/home/joe/Projects/telecom-news`.
 
 ## References

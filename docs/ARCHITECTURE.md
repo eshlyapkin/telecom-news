@@ -125,7 +125,7 @@
 - **Ответственность:** формат публикации (заголовок, саммари, категория, ссылка, язык); dry-run/preview (печатает текст вместо отправки); защита от повторной публикации — публикация только статей со статусом `processed` и перевод в `published` атомарно; retry при временных ошибках API.
 - **НЕ делает:** генерацию контента; не меняет релевантность/категорию.
 
-### 3.11 CLI (`main.py`, `python -m telecom_news`)
+### 3.11 CLI (`cli.py`, `python -m telecom_news`)
 
 - **Назначение:** единственный интерфейс MVP (D-004).
 - **Команды (MVP):**
@@ -137,7 +137,7 @@
 - **Зависимости:** все слои выше.
 - **НЕ делает:** фоновую работу и расписание напрямую (это scheduler, 3.12); не является HTTP-сервером.
 
-### 3.12 Scheduler (`scheduler.py`)
+### 3.12 Scheduler (внешний: `scripts/run_pipeline.sh`)
 
 - **Назначение:** автоматический запуск pipeline по расписанию (M5). MVP-подход: простая встроенная петля/планировщик на stdlib или системный cron, вызывающий `python -m telecom_news run`.
 - **Вход:** интервал из конфигурации.
@@ -154,7 +154,7 @@
 - **Идемпотентность:** ключ `(chat_id, article_id, lang)` в `deliveries`; повторный прогон не дублирует отправленное.
 - **НЕ делает:** не выбирает темы/категории, не переводит через внешние сервисы, не хранит учётные записи.
 
-### 3.13 Logging (`logging.py` / stdlib `logging`)
+### 3.13 Logging (`logging_config.py` / stdlib `logging`)
 
 - **Назначение:** единый структурированный лог всех этапов.
 - **Формат:** stdlib `logging`, консоль + файл в `data/logs/`; уровень из конфигурации; для каждого этапа — source_id, article hash, статус.
@@ -167,42 +167,98 @@
 - Telegram API: retry при 429/5xx с учётом `retry_after`; неуспех публикации не меняет статус статьи (повторится позже).
 - Временные ошибки не должны приводить к дублированию публикаций — защита через статусы в БД (3.6, 3.10).
 
-## 4. Целевая структура пакетов (MVP)
+### 3.15 Control panel (`api/`, M9a–M11)
+
+- **Назначение:** локальная панель управления на FastAPI (`serve`, 127.0.0.1:8765,
+  **без аутентификации** — D-021). Вкладки: Overview (паузы, run-now, языки
+  канала), Queue, Published, Sources, Discovery, AI rules.
+- **Принцип:** панель пишет операторские файлы в `data/` (§6), а не правит код и
+  не держит состояние в памяти процесса. Поэтому её решения видит и пайплайн,
+  запускаемый по расписанию отдельным процессом.
+- **`ops.py`** — только чтение: статус, очередь, опубликованные посты с текстом
+  по каждому языку. Поля отдаются раздельно, разметка Telegram — отдельным полем:
+  контент приходит из чужих лент и от модели, и не должен попадать на страницу
+  как HTML.
+- **`pipeline_run.py`** — запуск этапа в фоновом потоке (один за раз), со
+  статусом и хвостом лога; `options` несут настройки этапа (например, режим
+  поиска источников).
+
+### 3.16 Operator rules (`ai_rules.py`)
+
+- **Назначение:** редакционная политика релевантности, редактируемая в панели:
+  системный промпт классификатора, термины messaging/off-topic, force-LLM.
+- **Границы:** контракт ответа модели (`relevance.RESPONSE_FORMAT_INSTRUCTION`)
+  дописывается кодом и не редактируется; списки терминов **объединяются** со
+  встроенными, а не заменяют их. Оба ограничения — следствие реальных поломок
+  (D-022, D-023): редактор не должен уметь сломать парсер или выключить
+  кириллическую половину guard'а.
+
+### 3.17 Source discovery (`source_discovery.py`)
+
+- **Назначение:** предлагать новые источники, не добавляя их автоматически.
+- **Где ищет:** темы из AI rules (D-027) уходят в новостной поиск, из результата
+  берётся **издатель**, а не статья (D-025); плюс внешние ссылки уже собранных
+  статей. У каждого сайта ищется лента, а если её нет — датированная карта сайта.
+- **Как оценивает:** доля свежих **заголовков**, проходящих операторский
+  keyword-gate (D-024) — тем же правилам, по которым потом фильтруются новости.
+- **Что помнит:** предложения, отказы (на уровне сайта) и историю проб с
+  результатом и сроком до следующей проверки (D-028, D-029).
+
+## 4. Фактическая структура пакета
+
+Это состояние репозитория, а не план. Планируемая в M0 раскладка (`main.py`,
+`logging_setup.py`, `collectors/api.py`, `scheduler.py`) не пережила реализацию:
+CLI живёт в `cli.py`, логирование — в `logging_config.py`, расписание — внешнее
+(`scripts/run_pipeline.sh` + Task Scheduler/cron), а `api/` был создан в M9a
+после того, как D-021 подтвердил use case для FastAPI.
 
 ```
 src/telecom_news/
-├── __init__.py
-├── main.py            # CLI: run / collect / process / publish / status
-├── config.py          # конфигурация: источники, LM Studio, Telegram (env), пути
-├── logging_setup.py   # настройка логирования
-├── models.py          # доменная модель Article (M0; без зависимости от storage)
+├── __main__.py          # python -m telecom_news → cli.main()
+├── cli.py               # все команды: run/collect/process/publish/deliver/bot/
+│                        # sources/status/doctor/diagnose/recover/discover/prune/
+│                        # backup/restore/projects/serve
+├── config.py            # Config (env + операторские оверрайды), реестр SOURCES,
+│                        # SOURCE_TYPES, refresh_sources()
+├── models.py            # доменная модель Article
+├── logging_config.py    # setup_logging()
 ├── collectors/
-│   ├── __init__.py
-│   ├── base.py        # RawItem + базовый коллектор (retry, таймауты)
-│   ├── rss.py         # RSS-коллектор (кандидат на первый источник, D-007)
-│   └── api.py         # API-клиент (альтернатива; выбор в M1)
+│   ├── base.py          # RawItem, fetch_url (retry, browser-UA на 403)
+│   ├── rss.py           # RSS/Atom
+│   └── sitemap.py       # карты сайта для изданий без ленты (D-026)
 ├── processors/
-│   ├── __init__.py
-│   ├── normalize.py   # RawItem → Article
-│   ├── dedup.py       # дедупликация по content_hash / URL
-│   ├── relevance.py   # релевантность SMS/messaging + категория (LLM)
-│   └── summarize.py   # саммари + перевод RU↔EN (LLM)
-├── llm/
-│   ├── __init__.py
-│   └── client.py      # LM Studio HTTP client, retry, LLMUnavailableError
-├── storage/
-│   ├── __init__.py
-│   └── database.py    # SQLite (stdlib sqlite3), схема, CRUD; storage-specific модели (M2)
+│   ├── normalize.py     # RawItem → Article
+│   ├── dedup.py         # по content_hash / URL
+│   ├── freshness.py     # возраст статьи (D-017)
+│   ├── relevance.py     # keyword-gate + LLM-классификатор, RESPONSE_FORMAT (D-023)
+│   ├── summarize.py     # заголовок + саммари на целевом языке (D-024)
+│   └── renditions.py    # кэш (article, lang) → заголовок/саммари
+├── llm/client.py        # LM Studio HTTP, LLMUnavailableError/LLMResponseError
+├── storage/database.py  # SQLite: articles, renditions, subscribers, deliveries,
+│                        # source_health, bot_state
 ├── delivery/
-│   ├── __init__.py
-│   └── telegram.py    # Telegram Bot API, dry-run, защита от повторной публикации
-└── scheduler.py       # автоматический запуск (M5)
+│   ├── telegram.py      # Bot API, format_post, dry-run, идемпотентность
+│   └── planner.py       # что и кому слать (подписчики, языки, лимиты)
+├── bot.py               # long-polling бот: /start, /language, подписки
+├── diagnostics.py       # находки для `diagnose`
+├── projects.py          # multi-project registry (M9a, D-021)
+├── pipeline_run.py      # фоновый запуск этапов из панели + options
+├── api/
+│   ├── app.py           # FastAPI: проекты, очередь, источники, правила, поиск
+│   ├── ops.py           # read-only срезы: статус, очередь, опубликованное
+│   └── static/          # панель (index.html, app.js, styles.css)
+├── ai_rules.py          # операторские правила релевантности (D-022, D-023)
+├── channel_languages.py # языки канала на лету (D-025)
+├── source_overrides.py  # вкл/выкл источников из панели (M9b)
+├── custom_sources.py    # добавление/удаление источников (D-022, D-026)
+├── source_discovery.py  # поиск новых источников (D-024…D-029)
+├── sources_catalog.py   # сгенерированный каталог лент
+└── source_import.py     # `sources import` из таблицы
 
-tests/                 # pytest: unit + smoke; фикстуры вместо реальных LLM/Telegram
-data/                  # news.db, logs/ — не в git
+scripts/                 # setup.sh, run_pipeline.sh, run_discovery.sh, check_secrets.sh
+tests/                   # pytest; conftest.py изолирует данные и окружение (D-026)
+data/                    # не в git: news.db, logs/ и операторские оверрайды (см. §6)
 ```
-
-Каталог `api/` **не создаётся** до подтверждения FastAPI (D-004). Существующий пустой каталог `src/telecom_news/api/` удаляется при M0.
 
 ## 5. Ключевые потоки данных
 
@@ -216,12 +272,47 @@ data/                  # news.db, logs/ — не в git
 
 ## 6. Конфигурация
 
-- `config.py`: значения по умолчанию + переопределение через env:
-  - `TELECOM_NEWS_DB` (путь к SQLite, по умолчанию `data/news.db`)
-  - `LMSTUDIO_BASE_URL` (по умолчанию `http://localhost:1234/v1`), `LMSTUDIO_MODEL`
-  - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-  - `LOG_LEVEL`
-- Источники — декларативный список в конфигурации (id, type=rss/api, url, language, enabled).
+Три слоя, в порядке возрастания приоритета: значения по умолчанию в коде →
+переменные окружения → операторские файлы в `data/`. Панель пишет третий слой,
+поэтому её изменения доходят до следующего цикла без перезапуска: каждый процесс
+собирает `Config` заново (цикл пайплайна — отдельный процесс, API — на запрос).
+
+**Окружение** (`~/.config/telecom-news/env`, режим 600; читается systemd-юнитом
+serve и `scripts/run_pipeline.sh`; это `EnvironmentFile`, поэтому строки пишутся
+как `VAR=value`, **без** `export`):
+
+| Переменная | Назначение |
+|---|---|
+| `TELECOM_NEWS_DB`, `TELECOM_NEWS_DATA_DIR` | пути к SQLite и каталогу данных |
+| `LMSTUDIO_BASE_URL`, `LMSTUDIO_MODEL` | LM Studio |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | канал; `TELEGRAM_CHAT_ID_<LANG>` — отдельный канал на язык |
+| `TELECOM_NEWS_TARGET_LANGS` | языки публикации (перекрывается панелью, D-025) |
+| `TELECOM_NEWS_DISABLED_SOURCES` | кил-свитч источников (D-017) |
+| `TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS` | порог свежести на входе (D-017) |
+| `PUBLISH_MAX_PER_CYCLE`, `PUBLISH_MAX_AGE_HOURS` | лимиты публикации (D-020) |
+| `SUBSCRIBER_MAX_PER_CYCLE`, `SUBSCRIBER_MAX_AGE_HOURS`, `SUBSCRIBER_MAX_ATTEMPTS` | лимиты рассылки (D-020) |
+| `LOG_LEVEL`, `TELEGRAM_MIN_INTERVAL` | прочее |
+
+**Операторские файлы в `data/`** (не в git; каждый — оверрайд, удаление
+возвращает поведение по умолчанию):
+
+| Файл | Что задаёт | Решение |
+|---|---|---|
+| `ai_rules.json` | редакционная политика и термины релевантности | D-022, D-023 |
+| `channel_languages.json` | языки канала | D-025 |
+| `disabled_sources.json` | выключенные источники | M9b |
+| `custom_sources.json`, `removed_sources.json` | добавленные/удалённые источники | D-022, D-026 |
+| `discovery_queries.json` | темы поиска (иначе выводятся из AI rules) | D-027 |
+| `discovery_settings.json` | срок пропуска проверенных сайтов | D-029 |
+| `source_candidates.json` | состояние поиска: предложения, отказы, история проб | D-024, D-028 |
+| `projects/registry.json` | реестр проектов и глобальная пауза | D-021 |
+| `last_run.json` | результат последнего запуска из панели | M9c |
+
+**Источники** — декларативный список (`id`, `type` = `rss` | `sitemap`, `url`,
+`language`, `enabled`, `relevance_gate`). Реестр собирается из объявленного в
+коде и каталоге baseline и оверрайдов в фиксированном порядке
+(`config.refresh_sources`): env-выключения → soft-delete → пользовательские
+ленты → переключатели панели.
 
 ## 7. Non-goals для MVP (только возможное развитие после MVP)
 

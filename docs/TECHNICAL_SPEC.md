@@ -1,3 +1,8 @@
+> **Historical.** This document specifies the original M0 (a click-based CLI in
+> `main.py`) and was superseded during implementation. The CLI lives in `cli.py`
+> and uses argparse; `main.py` no longer exists. For the current structure read
+> `docs/ARCHITECTURE.md` §4, for the current state `docs/CURRENT.md`.
+
 # Technical Specification – M0 (Foundation)
 
 ## Scope

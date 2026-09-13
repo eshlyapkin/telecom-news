@@ -8,8 +8,10 @@ if [ ! -x ".venv/bin/python" ]; then
     echo "--- creating .venv (project-local) ---"
     python3 -m venv .venv
 fi
-echo "--- installing package with dev extras ---"
-.venv/bin/pip install -e ".[dev]"
+echo "--- installing package with dev + api extras ---"
+# `api` is what the control panel (`serve`) needs; installing it here keeps a
+# fresh clone from failing on `python -m telecom_news serve` with an import error.
+.venv/bin/pip install -e ".[dev,api]"
 echo "--- enabling git hooks (.githooks) ---"
 git config core.hooksPath .githooks
 echo "--- running test suite ---"
