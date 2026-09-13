@@ -57,10 +57,19 @@ git config core.hooksPath .githooks
 
 Для WSL рекомендуется Windows Task Scheduler: создать задачу с повтором каждые
 15 минут, действие — `wsl.exe`, аргументы —
-`-d <ваш-дистрибутив> -- bash -lc 'source ~/.config/telecom-news/env && cd /home/joe/Projects/telecom-news && ./scripts/run_pipeline.sh'`.
-Секреты храните вне репозитория, например в `~/.config/telecom-news/env` с
-правами `chmod 600`; файл должен экспортировать `TELEGRAM_BOT_TOKEN` и
-`TELEGRAM_CHAT_ID`. LM Studio должен быть доступен из WSL во время прогона.
+`-d <ваш-дистрибутив> -- /home/joe/Projects/telecom-news/scripts/run_pipeline.sh`.
+Скрипт сам читает `~/.config/telecom-news/env` (путь переопределяется
+`TELECOM_NEWS_ENV_FILE`), поэтому сорсить файл в действии задачи больше не нужно.
+Секреты храните вне репозитория, в том же `~/.config/telecom-news/env` с правами
+`chmod 600`; файл читается и systemd-юнитом serve, поэтому пишите в нём
+`VAR=value` **без** слова `export` — systemd такие строки молча отбрасывает.
+Нужны как минимум `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`. LM Studio должен
+быть доступен из WSL во время прогона.
+
+Вторая задача — поиск новых источников, раз в сутки:
+`-d <ваш-дистрибутив> -- /home/joe/Projects/telecom-news/scripts/run_discovery.sh`.
+Она только складывает предложения в `data/source_candidates.json` (вкладка
+Discovery), реестр источников не меняет.
 
 Для cron аналогичная запись запускает скрипт каждые 15 минут:
 

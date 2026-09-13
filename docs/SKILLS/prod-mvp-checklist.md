@@ -56,11 +56,31 @@ Healthy signs:
 - `exit_code=0`
 - diagnose: LM/Telegram OK; quiet-channel only if feeds had no SMS-relevant items
 
-Windows Task Scheduler example (WSL):
+Windows Task Scheduler example (WSL). Since 2026-09-13 the script reads
+`~/.config/telecom-news/env` itself, so the action no longer has to source it —
+that omission is what left every scheduled run without a Telegram token:
 
 ```text
-wsl -d <distro> -- bash -lc 'source ~/.config/telecom-news/env && cd /home/joe/Projects/telecom-news && ./scripts/run_pipeline.sh'
+wsl -d <distro> -- /home/joe/Projects/telecom-news/scripts/run_pipeline.sh
 ```
+
+## 2b. Source discovery (optional, daily)
+
+A second task proposes new feeds; it never changes the registry, so it is safe
+to run unattended. Daily is right — a pass takes ~2 minutes and the link
+neighbourhood moves slowly.
+
+```text
+wsl -d <distro> -- /home/joe/Projects/telecom-news/scripts/run_discovery.sh
+```
+
+```bash
+tail -n 30 data/logs/discovery.log
+.venv/bin/python -m telecom_news discover --list      # what is waiting for you
+```
+
+Proposals appear in the **Discovery** tab of the panel; `Add as source` puts one
+into the pipeline, `Dismiss` silences that site for good.
 
 ## 3. Subscriber bot (private DM path — separate from channel)
 
