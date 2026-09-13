@@ -85,6 +85,16 @@ DEFAULT_QUERIES: tuple[str, ...] = (
     "смс мошенничество операторы",
 )
 
+# Links that look like a feed or a page listing feeds. Assets are excluded: an
+# "rss.svg" icon is not a feed, and thefastmode.com links exactly that next to
+# the /rss-feeds page that does hold its feeds.
+_FEEDISH_HREF_RE = re.compile(r'href=["\']([^"\'<>\s]*(?:rss|feed|atom)[^"\'<>\s]*)["\']', re.I)
+_ASSET_SUFFIXES: tuple[str, ...] = (".svg", ".png", ".jpg", ".jpeg", ".gif", ".css", ".js", ".ico")
+# Publishers routinely host their feeds elsewhere — thefastmode.com lists 14 of
+# them on feeds.feedburner.com — so a feeds page may legitimately point off-site.
+_FEED_HOSTS: tuple[str, ...] = ("feedburner.com", "feedpress.me", "feedblitz.com")
+MAX_LINKS_FROM_FEED_PAGE = 6
+
 _CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 _HREF_RE = re.compile(r'href=["\'](https?://[^"\'<>\s]+)["\']', re.IGNORECASE)
 # Aggregators, social networks and CDNs: linked from everywhere, never a source.
@@ -388,6 +398,43 @@ def search_publisher_hosts(
     return [(host, f"https://{host}/") for host in ranked]
 
 
+def _autodiscovered(html: str, base_url: str) -> list[str]:
+    """Absolute feed addresses a page advertises with ``<link rel="alternate">``."""
+    parser = _FeedLinkParser()
+    try:
+        parser.feed(html)
+    except Exception:  # noqa: BLE001 — malformed markup must not stop a scan
+        logger.debug("discovery: unparsable HTML at %s", base_url)
+        return []
+    return [urljoin(base_url, href) for href in parser.feeds]
+
+
+def _feedish_links(html: str, base_url: str, *, allow_feed_hosts: bool = False) -> list[str]:
+    """Links whose address mentions rss/feed/atom, assets excluded.
+
+    Same-host only by default — on a front page any other host is somebody
+    else's feed. ``allow_feed_hosts`` additionally keeps the feed-hosting
+    services, which is what a publisher's own "our feeds" page points at.
+    """
+    host = host_of(base_url)
+    links: list[str] = []
+    seen: set[str] = set()
+    for href in _FEEDISH_HREF_RE.findall(html):
+        url = urljoin(base_url, href)
+        if url in seen:
+            continue
+        url_host = host_of(url)
+        same_site = url_host == host
+        hosted = allow_feed_hosts and any(part in url_host for part in _FEED_HOSTS)
+        if not (same_site or hosted):
+            continue
+        if url.lower().split("?")[0].endswith(_ASSET_SUFFIXES):
+            continue
+        seen.add(url)
+        links.append(url)
+    return links
+
+
 def feed_urls_for_site(site_url: str, *, client: Any | None = None) -> list[str]:
     """Feed addresses advertised by a page, then the conventional paths.
 
@@ -402,13 +449,25 @@ def feed_urls_for_site(site_url: str, *, client: Any | None = None) -> list[str]
         logger.debug("discovery: cannot read %s: %s", site_url, exc)
         return []
 
-    found: list[str] = []
-    parser = _FeedLinkParser()
-    try:
-        parser.feed(body.decode("utf-8", errors="replace"))
-    except Exception:  # noqa: BLE001 — malformed markup must not stop a scan
-        logger.debug("discovery: unparsable HTML at %s", site_url)
-    found.extend(urljoin(site_url, href) for href in parser.feeds)
+    html = body.decode("utf-8", errors="replace")
+    found: list[str] = _autodiscovered(html, site_url)
+    if not found:
+        # No <link rel="alternate">. Many outlets instead keep a human page that
+        # lists their feeds ("/rss-feeds", "/rss"); follow a couple of those one
+        # level down rather than giving up on the site.
+        for page_url in _feedish_links(html, site_url)[:2]:
+            try:
+                page = fetch_url(page_url, timeout=PROBE_TIMEOUT, max_retries=1, client=client)
+            except CollectorError:
+                continue
+            page_html = page.decode("utf-8", errors="replace")
+            found.extend(_autodiscovered(page_html, page_url))
+            harvested = [
+                url
+                for url in _feedish_links(page_html, page_url, allow_feed_hosts=True)
+                if url != page_url
+            ]
+            found.extend(harvested[:MAX_LINKS_FROM_FEED_PAGE])
     for path in COMMON_FEED_PATHS:
         found.append(urljoin(site_url, path))
     seen: set[str] = set()

@@ -126,6 +126,62 @@ def test_feed_urls_prefer_autodiscovery_then_conventions() -> None:
     assert "https://good.example/feed/" in urls
 
 
+def test_feed_page_is_followed_one_level_down() -> None:
+    """Outlets often keep their feeds on an "our feeds" page, hosted elsewhere."""
+    homepage = (
+        '<html><body><a href="/media/rss.svg">icon</a>'
+        '<a href="/rss-feeds">Our RSS feeds</a></body></html>'
+    )
+    feeds_page = (
+        '<html><body><a href="http://feeds.feedburner.com/GoodMessaging">messaging</a>'
+        '<a href="https://elsewhere.example/feed/">someone else</a></body></html>'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://good.example/":
+            return httpx.Response(200, text=homepage)
+        if url == "https://good.example/rss-feeds":
+            return httpx.Response(200, text=feeds_page)
+        return httpx.Response(404, text="nope")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    urls = discovery.feed_urls_for_site("https://good.example/", client=client)
+
+    assert "http://feeds.feedburner.com/GoodMessaging" in urls  # feed host allowed
+    assert "https://elsewhere.example/feed/" not in urls  # unrelated host is not
+    assert not any(url.endswith(".svg") for url in urls)  # the icon is not a feed
+    assert "https://good.example/feed/" in urls  # conventional paths still tried
+
+
+def test_front_page_links_stay_on_the_same_host() -> None:
+    """Another publisher's feed linked from a front page is not this site's feed."""
+    homepage = '<html><body><a href="https://other.example/feed/">partner</a></body></html>'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=homepage)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    urls = discovery.feed_urls_for_site("https://good.example/", client=client)
+    assert not any("other.example" in url for url in urls)
+
+
+def test_an_existing_candidate_survives_a_scan_that_finds_nothing(tmp_path: Path) -> None:
+    discovery.save_state(
+        {
+            "candidates": [
+                {"id": "keep-me", "feed_url": "https://keep.example/feed/", "status": "new"}
+            ],
+            "dismissed": [],
+            "scanned_at": "earlier",
+        },
+        tmp_path,
+    )
+    db = _seeded_db(tmp_path, {})
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=2, use_search=False)
+    assert [c["id"] for c in discovery.list_candidates(tmp_path)["candidates"]] == ["keep-me"]
+
+
 def test_evaluate_feed_scores_with_the_messaging_gate() -> None:
     verdict = discovery.evaluate_feed(
         MESSAGING_FEED.encode("utf-8"), feed_url="https://good.example/feed/"

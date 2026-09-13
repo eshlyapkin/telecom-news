@@ -27,7 +27,16 @@ tab, one query per line; a Cyrillic query searches the Russian-language press.
 No API key. One request per query, so keep the list short and the schedule
 daily; `--no-search` (and the panel checkbox) falls back to link-following only.
 
-`pytest -q` → **381 passed**.
+**Feeds that are not advertised.** Many outlets publish no
+`<link rel="alternate">` and instead keep a human "our feeds" page, often
+pointing at a feed-hosting service — thefastmode.com lists 14 feeds on
+feedburner. When a front page advertises nothing, the scan now follows up to two
+such pages one level down and harvests what they list (feed hosts allowed there,
+unrelated hosts and icons never).
+
+**Confirmed end to end in production:** a scan proposed `eztexting.com`, the
+operator accepted it in the panel, and it is now a normal source — the registry
+is 64 sources. `pytest -q` → **384 passed**.
 
 ## Session 2026-09-13 (M10b): channel languages switchable from the panel
 
