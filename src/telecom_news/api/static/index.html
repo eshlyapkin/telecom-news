@@ -258,9 +258,16 @@
       <div id="candidates-list"></div>
 
       <h2 class="sub">Sites already probed</h2>
+      <div class="actions">
+        <label class="inline">Skip a probed site for
+          <input type="number" id="recheck-days" min="0" max="3650" />
+        </label>
+        <span class="muted small">days (0 = probe every site on every scan)</span>
+        <button type="button" class="btn ok" id="btn-save-recheck">Save</button>
+      </div>
       <p class="muted small" id="history-meta"></p>
       <div class="table-wrap"><table id="table-history"><thead>
-        <tr><th>when</th><th>site</th><th>result</th><th>on topic</th><th>what was found</th><th>next scan</th></tr>
+        <tr><th>when</th><th>site</th><th>result</th><th>on topic</th><th>what was found</th><th>next check</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
 

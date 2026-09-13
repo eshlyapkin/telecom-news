@@ -846,3 +846,107 @@ def test_a_repeat_scan_reaches_further_down_the_ranking(tmp_path: Path) -> None:
     assert second["checked_sites"] == 2  # two *different* sites, not zero
     assert second["skipped_sites"] == 2
     assert discovery.list_checked(tmp_path)["count"] == 4
+
+
+# --- the re-check period is the operator's to set ---------------------------
+
+
+def test_recheck_period_defaults_and_round_trip(tmp_path: Path) -> None:
+    assert discovery.load_settings(tmp_path) == {"recheck_after_days": discovery.RECHECK_AFTER_DAYS}
+
+    assert discovery.save_settings(recheck_after_days=7, data_dir=tmp_path) == {
+        "recheck_after_days": 7
+    }
+    assert discovery.load_settings(tmp_path)["recheck_after_days"] == 7
+    assert discovery.list_checked(tmp_path)["recheck_after_days"] == 7
+
+
+def test_an_unusable_period_is_rejected(tmp_path: Path) -> None:
+    for value in (-1, 4000, "soon"):
+        with pytest.raises(ValueError):
+            discovery.save_settings(recheck_after_days=value, data_dir=tmp_path)
+    assert not discovery.settings_path(tmp_path).exists()
+
+
+def test_a_broken_settings_file_falls_back_to_the_default(tmp_path: Path) -> None:
+    discovery.settings_path(tmp_path).write_text("{oops", encoding="utf-8")
+    assert discovery.load_settings(tmp_path)["recheck_after_days"] == discovery.RECHECK_AFTER_DAYS
+
+
+def test_history_counts_the_days_left_before_the_next_check(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"], 2: ["https://noise.example/2"]})
+    discovery.save_settings(recheck_after_days=10, data_dir=tmp_path)
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
+
+    (row,) = discovery.list_checked(tmp_path)["checked"]
+    assert row["days_until_recheck"] == 10 and row["due_for_recheck"] is False
+
+    # four days later it is six days away, and it rounds up rather than down
+    state = discovery.load_state(tmp_path)
+    moved = datetime.now(timezone.utc) - timedelta(days=4)
+    state["checked"]["noise.example"]["last_checked_at"] = moved.isoformat(timespec="seconds")
+    discovery.save_state(state, tmp_path)
+    assert discovery.list_checked(tmp_path)["checked"][0]["days_until_recheck"] == 6
+
+
+def test_zero_days_probes_every_site_every_scan(tmp_path: Path) -> None:
+    """The project's convention: 0 disables the guard (D-017, D-020)."""
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"], 2: ["https://noise.example/2"]})
+    discovery.save_settings(recheck_after_days=0, data_dir=tmp_path)
+
+    first = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client()
+    )
+    second = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client()
+    )
+    assert first["checked_sites"] == second["checked_sites"] == 1
+    assert second["skipped_sites"] == 0
+
+    listing = discovery.list_checked(tmp_path)
+    assert listing["checked"][0]["days_until_recheck"] == 0
+    assert listing["checked"][0]["due_for_recheck"] is True
+
+
+def test_a_shorter_period_brings_sites_back_sooner(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"], 2: ["https://noise.example/2"]})
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
+
+    state = discovery.load_state(tmp_path)
+    moved = datetime.now(timezone.utc) - timedelta(days=8)
+    state["checked"]["noise.example"]["last_checked_at"] = moved.isoformat(timespec="seconds")
+    discovery.save_state(state, tmp_path)
+
+    assert discovery.list_checked(tmp_path)["due_for_recheck"] == 0  # 30-day default
+    discovery.save_settings(recheck_after_days=7, data_dir=tmp_path)
+    assert discovery.list_checked(tmp_path)["due_for_recheck"] == 1
+
+    after = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client()
+    )
+    assert after["checked_sites"] == 1
+
+
+def test_api_reads_and_writes_the_period(client, tmp_path: Path) -> None:
+    body = client.get("/api/discovery-settings").json()
+    assert body["recheck_after_days"] == discovery.RECHECK_AFTER_DAYS
+    assert body["default_recheck_after_days"] == discovery.RECHECK_AFTER_DAYS
+
+    updated = client.put("/api/discovery-settings", json={"recheck_after_days": 3})
+    assert updated.status_code == 200
+    assert updated.json()["recheck_after_days"] == 3
+    assert discovery.load_settings(tmp_path)["recheck_after_days"] == 3
+    assert client.get("/api/discovery-history").json()["recheck_after_days"] == 3
+
+    assert client.put("/api/discovery-settings", json={"recheck_after_days": -1}).status_code == 422
+
+
+def test_gui_offers_the_period_and_the_next_check_column(client) -> None:
+    html = client.get("/").text
+    assert "next check" in html
+    assert 'id="recheck-days"' in html
+    assert "0 = probe every site on every scan" in html

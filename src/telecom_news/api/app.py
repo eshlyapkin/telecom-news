@@ -94,6 +94,12 @@ class DiscoverBody(BaseModel):
     recheck: bool = False
 
 
+class DiscoverySettingsBody(BaseModel):
+    """How long a probed site stays skipped. 0 = probe every site every scan."""
+
+    recheck_after_days: int = Field(ge=0, le=3650)
+
+
 class DiscoveryQueriesBody(BaseModel):
     """Topics the worldwide news search looks for. Empty restores the defaults."""
 
@@ -392,6 +398,29 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         if limit < 1 or limit > 1000:
             raise HTTPException(status_code=400, detail="limit must be 1..1000")
         return list_checked(config.data_dir, limit=limit)
+
+    @app.get("/api/discovery-settings")
+    def discovery_settings() -> dict[str, Any]:
+        from ..source_discovery import RECHECK_AFTER_DAYS, load_settings, settings_path
+
+        payload = load_settings(config.data_dir)
+        payload["default_recheck_after_days"] = RECHECK_AFTER_DAYS
+        payload["path"] = str(settings_path(config.data_dir))
+        return payload
+
+    @app.put("/api/discovery-settings")
+    def set_discovery_settings(body: DiscoverySettingsBody) -> dict[str, Any]:
+        from ..source_discovery import RECHECK_AFTER_DAYS, save_settings, settings_path
+
+        try:
+            payload = save_settings(
+                recheck_after_days=body.recheck_after_days, data_dir=config.data_dir
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload["default_recheck_after_days"] = RECHECK_AFTER_DAYS
+        payload["path"] = str(settings_path(config.data_dir))
+        return payload
 
     @app.get("/api/discovery-queries")
     def discovery_queries() -> dict[str, Any]:

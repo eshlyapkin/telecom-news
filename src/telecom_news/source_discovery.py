@@ -89,12 +89,15 @@ DEFAULT_QUERIES: tuple[str, ...] = (
 # acronym like "sms" or "ss7" is not. Terms are then OR-ed in small groups, and a
 # scan works through the groups a few at a time, so the whole rule set gets
 # covered over several runs instead of an arbitrary dozen terms being picked.
-# How long a site stays "already looked at". Without this a scan re-probes the
-# same hosts every run and never reaches anything new; with it forever, a site
-# that had no feed in September would never be looked at again. A month is short
-# enough to catch an outlet that starts publishing a feed and long enough that
-# consecutive scans spend their budget on sites nobody has checked yet.
+# How long a site stays "already looked at", unless the operator changes it in
+# the panel. Without a cooldown a scan re-probes the same hosts every run and
+# never reaches anything new; with an infinite one, a site that had no feed in
+# September would never be looked at again. A month is short enough to catch an
+# outlet that starts publishing a feed and long enough that consecutive scans
+# spend their budget on sites nobody has checked yet. ``0`` disables the skip
+# entirely, the same convention the freshness guards use (D-017, D-020).
 RECHECK_AFTER_DAYS = 30
+MAX_RECHECK_AFTER_DAYS = 3650
 # How much wider than the probe budget the candidate pool is drawn.
 SEED_POOL_FACTOR = 5
 
@@ -368,6 +371,57 @@ def seed_hosts(
         key=lambda host: (-len(linking_articles[host]), host),
     )
     return [(host, samples[host]) for host in ranked[:limit]]
+
+
+def settings_path(data_dir: Path | None = None) -> Path:
+    if data_dir is not None:
+        return Path(data_dir) / "discovery_settings.json"
+    from .config import load_config
+
+    return load_config().data_dir / "discovery_settings.json"
+
+
+def load_settings(data_dir: Path | None = None) -> dict[str, Any]:
+    """Operator-tunable discovery settings; defaults when unset or unreadable."""
+    settings: dict[str, Any] = {"recheck_after_days": RECHECK_AFTER_DAYS}
+    path = settings_path(data_dir)
+    try:
+        if not path.is_file():
+            return settings
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return settings
+    if not isinstance(raw, dict):
+        return settings
+    try:
+        days = int(raw["recheck_after_days"])
+    except (KeyError, TypeError, ValueError):
+        return settings
+    if 0 <= days <= MAX_RECHECK_AFTER_DAYS:
+        settings["recheck_after_days"] = days
+    return settings
+
+
+def save_settings(*, recheck_after_days: int, data_dir: Path | None = None) -> dict[str, Any]:
+    """Persist the settings. Raises ValueError on a value that makes no sense."""
+    try:
+        days = int(recheck_after_days)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("recheck_after_days must be a whole number of days") from exc
+    if not 0 <= days <= MAX_RECHECK_AFTER_DAYS:
+        raise ValueError(
+            f"recheck_after_days must be between 0 and {MAX_RECHECK_AFTER_DAYS} "
+            "(0 = probe every site on every scan)"
+        )
+    path = settings_path(data_dir)
+    with _LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps({"recheck_after_days": days}, indent=2) + "\n", encoding="utf-8"
+        )
+        temporary.replace(path)
+    return {"recheck_after_days": days}
 
 
 def queries_path(data_dir: Path | None = None) -> Path:
@@ -750,10 +804,12 @@ def scan(
             seeds.append((host, url))
 
     history: dict[str, Any] = dict(state["checked"])
-    fresh_cutoff = datetime.now(timezone.utc) - timedelta(days=RECHECK_AFTER_DAYS)
+    cooldown_days = int(load_settings(data_dir)["recheck_after_days"])
+    fresh_cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
 
     def _recently_checked(host: str) -> bool:
-        if recheck:
+        # 0 days means "probe everything every time" (D-017 convention).
+        if recheck or cooldown_days <= 0:
             return False
         moment = _parse_moment(str((history.get(host) or {}).get("last_checked_at") or ""))
         return moment is not None and moment > fresh_cutoff
@@ -915,7 +971,7 @@ def scan(
 
     print(
         f"Discovery: searched {searched} topic(s), probed {checked} site(s), "
-        f"skipped {skipped} checked in the last {RECHECK_AFTER_DAYS} day(s), "
+        f"skipped {skipped} checked in the last {cooldown_days} day(s), "
         f"{len(added)} new candidate(s)."
     )
     return {
@@ -941,13 +997,20 @@ OUTCOME_LABELS: dict[str, str] = {
 def list_checked(data_dir: Path | None = None, *, limit: int = 200) -> dict[str, Any]:
     """Where the scans have been: one row per host, most recent first."""
     state = load_state(data_dir)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=RECHECK_AFTER_DAYS)
+    cooldown_days = int(load_settings(data_dir)["recheck_after_days"])
+    now = datetime.now(timezone.utc)
     rows: list[dict[str, Any]] = []
     for host, entry in state["checked"].items():
         if not isinstance(entry, dict):
             continue
         moment = _parse_moment(str(entry.get("last_checked_at") or ""))
         outcome = str(entry.get("outcome") or "")
+        if cooldown_days <= 0 or moment is None:
+            days_left = 0
+        else:
+            remaining = (moment + timedelta(days=cooldown_days)) - now
+            # Round up: "1 day left" should not read as 0 until the moment passes.
+            days_left = max(0, -(-int(remaining.total_seconds()) // 86400))
         rows.append(
             {
                 "host": host,
@@ -959,15 +1022,16 @@ def list_checked(data_dir: Path | None = None, *, limit: int = 200) -> dict[str,
                 "hit_rate": entry.get("hit_rate"),
                 "hits": entry.get("hits"),
                 "items": entry.get("items"),
-                # A scan skips a host until this turns false, unless "re-check" is asked.
-                "due_for_recheck": moment is None or moment <= cutoff,
+                # Whole days a scan will still skip this host; 0 = it is due now.
+                "days_until_recheck": days_left,
+                "due_for_recheck": days_left == 0,
             }
         )
     rows.sort(key=lambda row: str(row["last_checked_at"] or ""), reverse=True)
     return {
         "checked": rows[:limit],
         "count": len(rows),
-        "recheck_after_days": RECHECK_AFTER_DAYS,
+        "recheck_after_days": cooldown_days,
         "due_for_recheck": sum(1 for row in rows if row["due_for_recheck"]),
     }
 

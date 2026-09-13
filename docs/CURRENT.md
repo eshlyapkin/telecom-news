@@ -3,6 +3,27 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M11d): the re-check period is the operator's to set
+
+**Sites already probed** gained a **next check** column — "in 12 days" or "due
+now" per row, rounded up so a row never reads 0 while it is still being skipped.
+The period itself is now editable above the table (and with
+`discover --set-recheck-days N`), stored in `data/discovery_settings.json`.
+
+`0` means every site is probed on every scan, the same convention the freshness
+guards use (D-017, D-020). The limit is ten years, which is only there to keep a
+typo from turning the skip into "forever".
+
+Shortening the period brings sites back sooner without any extra bookkeeping:
+the history stores when each host was probed, and the remaining days are worked
+out against whatever the period is now.
+
+**Verified live** against the 24 sites in the operator's history: at 30 days
+every row read "in 30d"; setting 7 in the panel changed them to "in 7d" and the
+rule line to match, with nothing re-probed in between.
+
+`pytest -q` → **431 passed**.
+
 ## Session 2026-09-13 (M11c): discovery remembers where it has been
 
 Three operator questions, one answer: the scan kept no record of the sites it

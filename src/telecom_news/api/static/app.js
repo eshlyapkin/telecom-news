@@ -580,11 +580,17 @@ async function saveQueries(queries) {
    this table is also the answer to "will the next scan look somewhere new?". */
 async function refreshHistory() {
   try {
-    const data = await fetchJson("/api/discovery-history?limit=200");
+    const [data, settings] = await Promise.all([
+      fetchJson("/api/discovery-history?limit=200"),
+      fetchJson("/api/discovery-settings"),
+    ]);
+    el("recheck-days").value = settings.recheck_after_days;
+    const rule = settings.recheck_after_days
+      ? `a site is skipped for ${settings.recheck_after_days} days after a probe`
+      : "every site is probed on every scan";
     el("history-meta").textContent = data.count
-      ? `${data.count} site(s) probed · ${data.due_for_recheck} due for a re-check ` +
-        `(a site is skipped for ${data.recheck_after_days} days after a probe)`
-      : "No site has been probed yet.";
+      ? `${data.count} site(s) probed · ${data.due_for_recheck} due for a re-check (${rule})`
+      : `No site has been probed yet (${rule}).`;
     const tbody = el("table-history").querySelector("tbody");
     if (!data.count) {
       tbody.innerHTML = `<tr><td colspan="6" class="muted">Empty</td></tr>`;
@@ -600,9 +606,10 @@ async function refreshHistory() {
         const found = row.url
           ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noopener">${escapeHtml(row.kind || "")}</a>`
           : "—";
+        const days = row.days_until_recheck;
         const next = row.due_for_recheck
-          ? '<span class="badge warn">will re-check</span>'
-          : '<span class="badge on">skipped</span>';
+          ? '<span class="badge warn">due now</span>'
+          : `<span class="badge on">in ${escapeHtml(days)} day${days === 1 ? "" : "s"}</span>`;
         return `<tr>
           <td>${escapeHtml(String(row.last_checked_at || "").slice(0, 16))}</td>
           <td>${escapeHtml(row.host)}</td>
@@ -823,6 +830,17 @@ el("btn-reset-langs").onclick = () => resetLanguages().catch((e) => alert(e.mess
 el("btn-refresh-published").onclick = () => refreshPublished();
 el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();
+async function saveRecheckDays() {
+  const value = Number(el("recheck-days").value);
+  await fetchJson("/api/discovery-settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recheck_after_days: value }),
+  });
+  await refreshHistory();
+}
+
+el("btn-save-recheck").onclick = () => saveRecheckDays().catch((e) => alert(e.message));
 el("btn-refresh-candidates").onclick = () => {
   refreshCandidates();
   refreshHistory();

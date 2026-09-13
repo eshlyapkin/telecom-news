@@ -189,6 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
     discover_parser.add_argument(
         "--history", action="store_true", help="Show which sites have been probed, and when"
     )
+    discover_parser.add_argument(
+        "--set-recheck-days",
+        type=int,
+        metavar="N",
+        help="Store how long a probed site stays skipped (0 = probe every site every scan)",
+    )
     discover_parser.add_argument("--accept", help="Add this candidate id/url as a source")
     discover_parser.add_argument("--dismiss", help="Reject a candidate id/url for good")
 
@@ -1452,6 +1458,7 @@ def _cmd_discover(
     look_for: str = "both",
     recheck: bool = False,
     history: bool = False,
+    set_recheck_days: int | None = None,
 ) -> int:
     """Propose new feeds, or manage the proposals already stored.
 
@@ -1465,6 +1472,21 @@ def _cmd_discover(
     from .storage.database import Database
 
     config = load_config()
+    if set_recheck_days is not None:
+        try:
+            saved = source_discovery.save_settings(
+                recheck_after_days=set_recheck_days, data_dir=config.data_dir
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        days = saved["recheck_after_days"]
+        print(
+            f"A probed site is now skipped for {days} day(s)."
+            if days
+            else "Every site will be probed on every scan (no skipping)."
+        )
+        return 0
     if accept:
         try:
             result = source_discovery.accept_candidate(accept, data_dir=config.data_dir)
@@ -1526,9 +1548,10 @@ def _cmd_discover(
         )
         for row in seen["checked"]:
             rate = f"{float(row['hit_rate']):.0%}" if row["hit_rate"] is not None else "   -"
-            flag = "recheck" if row["due_for_recheck"] else "       "
+            days = row["days_until_recheck"]
+            when = "due now" if row["due_for_recheck"] else f"in {days}d"
             print(
-                f"  {str(row['last_checked_at'])[:16]}  {rate:>5}  {flag}  "
+                f"  {str(row['last_checked_at'])[:16]}  {rate:>5}  {when:>8}  "
                 f"{row['host'][:34]:34}  {row['outcome_label']}"
             )
         return 0
@@ -1908,6 +1931,7 @@ def main(argv: list[str] | None = None) -> int:
             look_for=args.look_for,
             recheck=args.recheck,
             history=args.history,
+            set_recheck_days=args.set_recheck_days,
         )
     if args.command == "prune":
         return _cmd_prune(args.max_age_days, args.dry_run)
