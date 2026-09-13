@@ -106,19 +106,38 @@ def test_unusable_documents_raise() -> None:
 # --- discovery --------------------------------------------------------------
 
 
-def test_discovery_prefers_robots_and_news_sitemaps() -> None:
+def test_declared_sitemaps_come_before_guessed_ones() -> None:
+    """A guessed /news-sitemap.xml must not push the declared one out of reach.
+
+    cnews.ru declares /inc/sitemap.xml and has no /news-sitemap.xml; sorting
+    "news first" across the whole list spent both probe slots on 404s and the
+    real sitemap was never read.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("/robots.txt"):
+            return httpx.Response(200, text="Sitemap: https://outlet.example/inc/sitemap.xml\n")
+        return httpx.Response(404)
+
+    urls = discover_sitemaps("https://outlet.example/", client=_client(handler))
+    assert urls[0] == "https://outlet.example/inc/sitemap.xml"
+    assert urls.index("https://outlet.example/inc/sitemap.xml") < urls.index(
+        "https://outlet.example/news-sitemap.xml"
+    )
+
+
+def test_declared_news_sitemap_wins_among_declared_ones() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url).endswith("/robots.txt"):
             return httpx.Response(
                 200,
-                text="User-agent: *\nSitemap: https://outlet.example/sitemap.xml\n"
+                text="Sitemap: https://outlet.example/sitemap.xml\n"
                 "Sitemap: https://outlet.example/news-sitemap.xml\n",
             )
         return httpx.Response(404)
 
     urls = discover_sitemaps("https://outlet.example/", client=_client(handler))
-    assert urls[0] == "https://outlet.example/news-sitemap.xml"  # news first
-    assert "https://outlet.example/sitemap.xml" in urls
+    assert urls[0] == "https://outlet.example/news-sitemap.xml"
 
 
 def test_discovery_falls_back_to_conventional_paths() -> None:

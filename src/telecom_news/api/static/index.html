@@ -200,6 +200,13 @@
       <div class="toolbar">
         <h1>Discovery</h1>
         <div class="actions">
+          <label class="inline">Look for
+            <select id="discover-look-for">
+              <option value="both">feed, else sitemap</option>
+              <option value="rss">RSS feeds only</option>
+              <option value="sitemap">sitemaps only (outlets with no feed)</option>
+            </select>
+          </label>
           <label class="inline">Sites to probe
             <input type="number" id="discover-sites" min="1" max="60" value="12" />
           </label>
@@ -210,10 +217,12 @@
       <p class="banner" id="discover-banner" hidden></p>
       <p class="muted small">
         A scan looks for publishers two ways: a worldwide news search for the topics below,
-        and the outbound links of articles already collected. Each site it finds is probed
-        for an RSS/Atom feed and scored with <strong>your AI rules</strong> — the share of
-        recent headlines that pass the messaging gate. Nothing is added to the pipeline
-        automatically: <strong>Add</strong> turns a proposal into a normal source,
+        and the outbound links of articles already collected. Each site it finds is checked
+        for an RSS/Atom feed and — when it publishes none — for a dated news sitemap, which
+        <code>collect</code> can read just as well. <strong>Look for</strong> narrows that to
+        one kind. Either way the result is scored with <strong>your AI rules</strong>: the
+        share of recent headlines that pass the messaging gate. Nothing is added to the
+        pipeline automatically: <strong>Add</strong> turns a proposal into a normal source,
         <strong>Dismiss</strong> silences that site for good.
         Schedule <code>scripts/run_discovery.sh</code> to keep watching continuously.
       </p>

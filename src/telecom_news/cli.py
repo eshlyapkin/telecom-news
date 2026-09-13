@@ -167,6 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--list", action="store_true", dest="show", help="Show stored candidates without scanning"
     )
     discover_parser.add_argument(
+        "--look-for",
+        choices=("both", "rss", "sitemap"),
+        default="both",
+        help=(
+            "What counts as a source: 'rss' only feeds, 'sitemap' only outlets that "
+            "publish none, 'both' the feed first and the sitemap as a fallback (default)"
+        ),
+    )
+    discover_parser.add_argument(
         "--no-search",
         action="store_false",
         dest="use_search",
@@ -1432,6 +1441,7 @@ def _cmd_discover(
     accept: str | None = None,
     dismiss: str | None = None,
     use_search: bool = True,
+    look_for: str = "both",
 ) -> int:
     """Propose new feeds, or manage the proposals already stored.
 
@@ -1470,6 +1480,15 @@ def _cmd_discover(
         if max_sites < 1:
             print(f"error: --max-sites must be >= 1 (got {max_sites}).", file=sys.stderr)
             return 2
+        from .source_discovery import LOOK_FOR_CHOICES
+
+        if look_for not in LOOK_FOR_CHOICES:
+            print(
+                f"error: --look-for must be one of {', '.join(LOOK_FOR_CHOICES)} "
+                f"(got {look_for!r}).",
+                file=sys.stderr,
+            )
+            return 2
         if not 0.0 <= min_hit_rate <= 1.0:
             print(
                 f"error: --min-hit-rate must be between 0 and 1 (got {min_hit_rate}).",
@@ -1482,6 +1501,7 @@ def _cmd_discover(
             max_sites=max_sites,
             min_hit_rate=min_hit_rate,
             use_search=use_search,
+            look_for=look_for,
         )
 
     listing = source_discovery.list_candidates(config.data_dir)
@@ -1856,6 +1876,7 @@ def main(argv: list[str] | None = None) -> int:
             accept=args.accept,
             dismiss=args.dismiss,
             use_search=args.use_search,
+            look_for=args.look_for,
         )
     if args.command == "prune":
         return _cmd_prune(args.max_age_days, args.dry_run)

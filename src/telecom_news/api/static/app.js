@@ -589,7 +589,8 @@ async function refreshCandidates() {
         return `<article class="card static" data-id="${escapeHtml(c.id)}">
           <h2>${escapeHtml(c.id)}
             <span class="badge ${rate >= 50 ? "running" : "warn"}">${escapeHtml(rate)}% on topic</span>
-            <span class="badge on">${escapeHtml(c.language)}</span></h2>
+            <span class="badge on">${escapeHtml(c.language)}</span>
+            <span class="badge ${c.type === "sitemap" ? "warn" : "on"}">${escapeHtml(c.type || "rss")}</span></h2>
           <div class="kv">
             <div><span>Feed</span><span><a href="${escapeHtml(c.feed_url)}" target="_blank" rel="noopener">${escapeHtml(c.feed_url)}</a></span></div>
             <div><span>Matched</span><span>${escapeHtml(c.hits)} of ${escapeHtml(c.items)} recent items</span></div>
@@ -643,6 +644,7 @@ async function startDiscoveryScan() {
     body: JSON.stringify({
       max_sites: Number(el("discover-sites").value) || 12,
       use_search: el("discover-use-search").checked,
+      look_for: el("discover-look-for").value || "both",
     }),
   });
   banner.hidden = false;

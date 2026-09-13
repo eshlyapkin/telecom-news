@@ -182,27 +182,34 @@ def discover_sitemaps(
     client: httpx.Client | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> list[str]:
-    """Sitemap addresses a site declares in robots.txt, then the usual paths."""
-    found: list[str] = []
+    """Sitemap addresses a site declares in robots.txt, then the usual paths.
+
+    What the site declares always comes before what we guess: a guessed
+    ``/news-sitemap.xml`` that happens to 404 must not push the real, declared
+    sitemap past the caller's probe budget. Inside each group a news sitemap
+    wins, being short, dated and made of articles only.
+    """
+    declared: list[str] = []
     try:
         robots = fetch_url(
             urljoin(site_url, "/robots.txt"), timeout=timeout, max_retries=1, client=client
         )
-        found.extend(
+        declared.extend(
             match.decode("utf-8", "replace").strip() for match in _ROBOTS_SITEMAP_RE.findall(robots)
         )
     except CollectorError as exc:
         logger.debug("sitemap: no robots.txt at %s (%s)", site_url, exc)
-    found.extend(urljoin(site_url, path) for path in COMMON_SITEMAP_PATHS)
+    guessed = [urljoin(site_url, path) for path in COMMON_SITEMAP_PATHS]
+
+    def _news_first(urls: list[str]) -> list[str]:
+        return sorted(urls, key=lambda url: 0 if "news" in urlparse(url).path.lower() else 1)
+
     ordered: list[str] = []
     seen: set[str] = set()
-    for url in found:
+    for url in _news_first(declared) + _news_first(guessed):
         if url and url not in seen:
             seen.add(url)
             ordered.append(url)
-    # A news sitemap is worth far more than the general one: it is short, dated
-    # and holds only articles.
-    ordered.sort(key=lambda url: 0 if "news" in urlparse(url).path.lower() else 1)
     return ordered
 
 

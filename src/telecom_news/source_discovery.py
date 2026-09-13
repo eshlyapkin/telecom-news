@@ -96,6 +96,15 @@ _FEED_HOSTS: tuple[str, ...] = ("feedburner.com", "feedpress.me", "feedblitz.com
 MAX_LINKS_FROM_FEED_PAGE = 6
 MAX_SITEMAPS_PROBED_PER_SITE = 2
 
+# What a scan is willing to propose. "both" tries the feed first and falls back
+# to the sitemap, which is the useful default; the single-kind modes exist so an
+# operator can say "only feeds, I do not want sitemap sources" or go looking
+# specifically at the outlets that publish no feed.
+LOOK_FOR_RSS = "rss"
+LOOK_FOR_SITEMAP = "sitemap"
+LOOK_FOR_BOTH = "both"
+LOOK_FOR_CHOICES: tuple[str, ...] = (LOOK_FOR_BOTH, LOOK_FOR_RSS, LOOK_FOR_SITEMAP)
+
 _CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 _HREF_RE = re.compile(r'href=["\'](https?://[^"\'<>\s]+)["\']', re.IGNORECASE)
 # Aggregators, social networks and CDNs: linked from everywhere, never a source.
@@ -586,6 +595,7 @@ def scan(
     max_sites: int = 12,
     min_hit_rate: float = MIN_HIT_RATE,
     use_search: bool = True,
+    look_for: str = LOOK_FOR_BOTH,
     client: Any | None = None,
 ) -> dict[str, Any]:
     """One discovery pass. Returns a summary and persists new candidates.
@@ -594,7 +604,14 @@ def scan(
     anywhere in the world", while the links of collected articles only map the
     neighbourhood of what is already being read. With ``use_search=False`` the
     scan makes no search requests at all.
+
+    ``look_for`` picks what counts as a source: ``"rss"`` only feeds,
+    ``"sitemap"`` only sitemaps (of outlets that publish no feed), ``"both"``
+    the feed first and the sitemap as a fallback.
     """
+    look_for = (look_for or LOOK_FOR_BOTH).strip().lower()
+    if look_for not in LOOK_FOR_CHOICES:
+        raise ValueError(f"look_for must be one of {', '.join(LOOK_FOR_CHOICES)}")
     state = load_state(data_dir)
     dismissed = set(state["dismissed"])
     # Dismiss is a verdict about the outlet, not about one URL of it: a site
@@ -633,7 +650,12 @@ def scan(
         print(f"discovery: probing {host}")
         failed_probes = 0
         proposed = False
-        for feed_url in feed_urls_for_site(site_url, client=client):
+        feed_urls = (
+            feed_urls_for_site(site_url, client=client)
+            if look_for in (LOOK_FOR_RSS, LOOK_FOR_BOTH)
+            else []
+        )
+        for feed_url in feed_urls:
             if failed_probes >= MAX_FAILED_PROBES_PER_SITE:
                 break
             if feed_url in dismissed or feed_url in existing:
@@ -668,7 +690,7 @@ def scan(
             proposed = True
             break  # one feed per host is enough to propose
 
-        if not proposed:
+        if not proposed and look_for in (LOOK_FOR_SITEMAP, LOOK_FOR_BOTH):
             # No usable feed — including the case where every guess was refused,
             # which is exactly when an outlet is worth checking for a sitemap.
             # collect can read a dated news sitemap as a source of its own (D-026).
@@ -717,6 +739,7 @@ def scan(
     return {
         "searched_topics": searched,
         "checked_sites": checked,
+        "look_for": look_for,
         "new_candidates": len(added),
         "candidates": [candidate.to_dict() for candidate in added],
         "scanned_at": state["scanned_at"],

@@ -88,6 +88,8 @@ class CandidateAcceptBody(BaseModel):
 class DiscoverBody(BaseModel):
     max_sites: int = Field(default=12, ge=1, le=60)
     use_search: bool = True
+    # rss | sitemap | both — what the scan is willing to propose.
+    look_for: str = "both"
 
 
 class DiscoveryQueriesBody(BaseModel):
@@ -379,6 +381,13 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
     @app.post("/api/source-candidates/scan")
     def scan_for_sources(body: DiscoverBody) -> dict[str, Any]:
         """Start a discovery pass in the background (shares the run-now slot)."""
+        from ..source_discovery import LOOK_FOR_CHOICES
+
+        if body.look_for not in LOOK_FOR_CHOICES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"look_for must be one of {', '.join(LOOK_FOR_CHOICES)}",
+            )
         project = reg.get(DEFAULT_PROJECT_ID)
         try:
             return start_run(
@@ -387,7 +396,7 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
                 db_path=reg.resolve_db_path(project, config.data_dir),
                 stage="discover",
                 limit=body.max_sites,
-                dry_run=not body.use_search,  # dry_run carries "skip the search"
+                options={"use_search": body.use_search, "look_for": body.look_for},
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

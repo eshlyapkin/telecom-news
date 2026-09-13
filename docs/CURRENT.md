@@ -3,6 +3,26 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M11a): choosing what discovery looks for
+
+A scan already checked both kinds — an RSS feed first, a dated news sitemap when
+the site publishes none — but there was no way to say which. **Look for** in the
+Discovery tab (and `discover --look-for {both,rss,sitemap}`) now narrows it:
+`rss` skips the sitemap fallback, `sitemap` does not probe feeds at all, `both`
+stays the default. Proposals carry their kind, and the candidate card shows it.
+
+The scan settings reach the background runner as a proper `options` dict instead
+of `dry_run` standing in for "skip the news search", which it had been doing
+since the panel grew a scan button.
+
+**Fixed along the way:** `discover_sitemaps` sorted news-looking addresses first
+across the whole list, so a *guessed* `/news-sitemap.xml` outranked the one the
+site *declares* in robots.txt. cnews.ru declares `/inc/sitemap.xml` and has no
+`/news-sitemap.xml`, so both probe slots went to 404s and its real sitemap was
+never read. Declared addresses now come first, news-first within each group.
+
+`pytest -q` → **412 passed**.
+
 ## Session 2026-09-13 (M11): sitemap sources + a hermetic test suite
 
 Version **0.7.0**. See D-026.

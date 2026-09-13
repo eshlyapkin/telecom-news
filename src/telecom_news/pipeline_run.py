@@ -14,7 +14,7 @@ import threading
 import traceback
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,6 +41,9 @@ class RunSnapshot:
     error: str | None = None
     log_tail: str = ""
     log_path: str | None = None
+    # Stage-specific settings (the discovery scan takes several); keeping them
+    # here beats overloading `dry_run` to mean something else per stage.
+    options: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -93,6 +96,7 @@ def start_run(
     dry_run: bool = False,
     limit: int | None = None,
     max_posts: int | None = None,
+    options: dict[str, Any] | None = None,
     runner: Callable[..., int] | None = None,
 ) -> dict[str, Any]:
     """Start a background pipeline run. Raises ``RuntimeError`` if busy/invalid."""
@@ -119,6 +123,7 @@ def start_run(
             dry_run=bool(dry_run),
             limit=limit,
             max_posts=max_posts,
+            options=dict(options or {}),
             started_at=_now(),
             finished_at=None,
             exit_code=None,
@@ -137,22 +142,16 @@ def start_run(
             os.environ["TELECOM_NEWS_DB"] = str(db_path)
             try:
                 with redirect_stdout(_LOG_BUF), redirect_stderr(_LOG_BUF):
-                    if runner is not None:
-                        code = int(
-                            runner(
-                                stage=stage,
-                                dry_run=dry_run,
-                                limit=limit,
-                                max_posts=max_posts,
-                            )
-                        )
-                    else:
-                        code = _default_runner(
+                    call = runner if runner is not None else _default_runner
+                    code = int(
+                        call(
                             stage=stage,
                             dry_run=dry_run,
                             limit=limit,
                             max_posts=max_posts,
+                            options=dict(options or {}),
                         )
+                    )
             finally:
                 if old_db is None:
                     os.environ.pop("TELECOM_NEWS_DB", None)
@@ -189,6 +188,7 @@ def _default_runner(
     dry_run: bool,
     limit: int | None,
     max_posts: int | None,
+    options: dict[str, Any] | None = None,
 ) -> int:
     """Call CLI stage helpers (same code path as ``python -m telecom_news run``)."""
     from .cli import _cmd_collect, _cmd_deliver, _cmd_process, _cmd_publish, _cmd_run
@@ -233,10 +233,14 @@ def _default_runner(
         return _cmd_deliver(None, dry_run)
     if stage == "discover":
         # Proposals only: a scan never changes the source registry by itself.
-        # `dry_run` is how the panel asks for a link-only pass (no news search).
         from .cli import _cmd_discover
 
-        return _cmd_discover(max_sites=limit or 12, use_search=not dry_run)
+        settings = options or {}
+        return _cmd_discover(
+            max_sites=limit or 12,
+            use_search=bool(settings.get("use_search", True)),
+            look_for=str(settings.get("look_for", "both")),
+        )
     raise ValueError(f"unknown stage {stage!r}")
 
 

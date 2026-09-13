@@ -568,3 +568,94 @@ def test_a_site_without_dated_headlines_is_not_proposed(tmp_path: Path) -> None:
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     assert result["new_candidates"] == 0
+
+
+# --- choosing what to look for ----------------------------------------------
+
+
+def test_look_for_rss_skips_the_sitemap_fallback(tmp_path: Path) -> None:
+    db = _seeded_db(tmp_path, {1: ["https://nofeed.example/1"], 2: ["https://nofeed.example/2"]})
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        look_for="rss",
+        client=_nofeed_client(),
+    )
+    assert result["look_for"] == "rss"
+    assert result["new_candidates"] == 0  # the site has a sitemap but no feed
+
+
+def test_look_for_sitemap_does_not_probe_feeds(tmp_path: Path) -> None:
+    seen: list[str] = []
+    db = _seeded_db(tmp_path, {1: ["https://nofeed.example/1"], 2: ["https://nofeed.example/2"]})
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        look_for="sitemap",
+        client=_nofeed_client(seen),
+    )
+    assert result["new_candidates"] == 1
+    assert not any(url.endswith(("/feed/", "/rss.xml", "/blog/feed/")) for url in seen)
+
+
+def test_both_is_the_default_and_prefers_the_feed(tmp_path: Path) -> None:
+    """A site with a working feed is proposed as rss, not as a sitemap."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://good.example/feed/":
+            return httpx.Response(200, content=MESSAGING_FEED.encode("utf-8"))
+        if url == "https://good.example/":
+            return httpx.Response(200, text="<html><head></head><body>site</body></html>")
+        return httpx.Response(404)
+
+    db = _seeded_db(tmp_path, {1: ["https://good.example/1"], 2: ["https://good.example/2"]})
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert result["look_for"] == "both"
+    (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
+    assert candidate["type"] == "rss"
+
+
+def test_an_unknown_look_for_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="look_for"):
+        discovery.scan(db=_seeded_db(tmp_path, {}), data_dir=tmp_path, look_for="carrier-pigeon")
+
+
+def test_api_passes_look_for_to_the_scan(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runner(**kwargs) -> int:  # noqa: ANN003
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("telecom_news.pipeline_run._default_runner", fake_runner)
+    started = client.post(
+        "/api/source-candidates/scan",
+        json={"max_sites": 3, "look_for": "sitemap", "use_search": False},
+    )
+    assert started.status_code == 200
+    for _ in range(40):
+        if client.get("/api/run/status").json()["status"] != "running":
+            break
+    assert captured["options"] == {"use_search": False, "look_for": "sitemap"}
+
+
+def test_api_rejects_an_unknown_look_for(client) -> None:
+    response = client.post("/api/source-candidates/scan", json={"look_for": "nope"})
+    assert response.status_code == 400
+
+
+def test_gui_offers_the_look_for_choice(client) -> None:
+    html = client.get("/").text
+    assert 'id="discover-look-for"' in html
+    assert "sitemaps only" in html
