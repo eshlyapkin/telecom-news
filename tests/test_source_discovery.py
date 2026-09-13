@@ -145,6 +145,107 @@ def test_evaluate_feed_rejects_off_topic_and_unusable_feeds() -> None:
     assert discovery.evaluate_feed(b"<html>not a feed</html>", feed_url="x") is None
 
 
+# --- worldwide topical search ----------------------------------------------
+
+SEARCH_FEED = """<?xml version="1.0"?><rss version="2.0"><channel>
+  <item><title>A2P SMS grows - Telecompaper</title>
+        <link>https://news.google.com/rss/articles/CBMiOPAQUE</link>
+        <source url="https://www.telecompaper.com">Telecompaper</source></item>
+  <item><title>SMS hub deal - Capacity</title>
+        <link>https://news.google.com/rss/articles/CBMiANOTHER</link>
+        <source url="https://www.capacityglobal.com">Capacity</source></item>
+  <item><title>Vendor news - Telecompaper</title>
+        <link>https://news.google.com/rss/articles/CBMiTHIRD</link>
+        <source url="https://www.telecompaper.com">Telecompaper</source></item>
+  <item><title>Sinch update - Sinch</title>
+        <link>https://news.google.com/rss/articles/CBMiFOURTH</link>
+        <source url="https://sinch.com">Sinch</source></item>
+</channel></rss>"""
+
+
+def test_search_url_follows_the_script_of_the_query() -> None:
+    assert "hl=en-US" in discovery.search_url('"A2P SMS"')
+    assert "ceid=RU:ru" in discovery.search_url("смс мошенничество")
+    assert "q=%22A2P+SMS%22" in discovery.search_url('"A2P SMS"')
+
+
+def test_search_returns_publisher_hosts_not_article_links() -> None:
+    """Search links are consent-walled redirects; only the publisher is usable."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "news.google.com" in str(request.url)
+        return httpx.Response(200, content=SEARCH_FEED.encode("utf-8"))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hosts = discovery.search_publisher_hosts(['"A2P SMS"'], client=client)
+
+    assert [host for host, _url in hosts] == ["telecompaper.com", "capacityglobal.com"]
+    assert all(url.startswith("https://") for _host, url in hosts)
+    assert all("news.google.com" not in url for _host, url in hosts)
+    # sinch.com is already a source, so it is not proposed again
+    assert "sinch.com" not in {host for host, _ in hosts}
+
+
+def test_queries_default_and_round_trip(tmp_path: Path) -> None:
+    assert discovery.load_queries(tmp_path) == list(discovery.DEFAULT_QUERIES)
+
+    saved = discovery.save_queries(["  SMPP routing ", "SMPP routing", "смс"], tmp_path)
+    assert saved == ["SMPP routing", "смс"]
+    assert discovery.load_queries(tmp_path) == ["SMPP routing", "смс"]
+
+    # an empty list restores the built-ins rather than disabling search silently
+    assert discovery.save_queries([], tmp_path) == list(discovery.DEFAULT_QUERIES)
+    assert not discovery.queries_path(tmp_path).exists()
+
+
+def test_broken_queries_file_falls_back_to_defaults(tmp_path: Path) -> None:
+    discovery.queries_path(tmp_path).write_text("{oops", encoding="utf-8")
+    assert discovery.load_queries(tmp_path) == list(discovery.DEFAULT_QUERIES)
+
+
+def test_scan_probes_publishers_found_by_search(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "news.google.com" in url:
+            return httpx.Response(200, content=SEARCH_FEED.encode("utf-8"))
+        if url == "https://telecompaper.com/feed/":
+            return httpx.Response(200, content=MESSAGING_FEED.encode("utf-8"))
+        if url.rstrip("/").endswith(("telecompaper.com", "capacityglobal.com")):
+            return httpx.Response(200, text="<html><head></head><body>site</body></html>")
+        return httpx.Response(404, text="nope")
+
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"]})
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert result["searched_topics"] > 0
+    (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
+    assert candidate["feed_url"] == "https://telecompaper.com/feed/"
+    assert "news search" in candidate["origin"]
+
+
+def test_scan_without_search_makes_no_search_request(tmp_path: Path) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(404, text="nope")
+
+    db = _seeded_db(tmp_path, {1: ["https://good.example/1"], 2: ["https://good.example/2"]})
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert result["searched_topics"] == 0
+    assert not any("news.google.com" in url for url in seen)
+
+
 # --- a full pass ------------------------------------------------------------
 
 
@@ -170,7 +271,9 @@ def test_scan_proposes_only_on_topic_feeds(tmp_path: Path) -> None:
             2: ["https://good.example/2", "https://noise.example/2"],
         },
     )
-    result = discovery.scan(db=db, data_dir=tmp_path, max_sites=5, client=_scan_client())
+    result = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client()
+    )
     assert result["new_candidates"] == 1
 
     listing = discovery.list_candidates(tmp_path)
@@ -186,14 +289,14 @@ def test_scan_does_not_touch_the_source_registry(tmp_path: Path) -> None:
     """A proposal is a proposal: collect must not start reading it by itself."""
     db = _seeded_db(tmp_path, {1: ["https://good.example/1"], 2: ["https://good.example/2"]})
     before = set(config_mod.SOURCES)
-    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, client=_scan_client())
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
     assert set(config_mod.SOURCES) == before
 
 
 def test_accept_turns_a_candidate_into_a_source(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("TELECOM_NEWS_DISABLED_SOURCES", raising=False)
     db = _seeded_db(tmp_path, {1: ["https://good.example/1"], 2: ["https://good.example/2"]})
-    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, client=_scan_client())
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
     (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
 
     result = discovery.accept_candidate(candidate["id"], data_dir=tmp_path)
@@ -204,13 +307,15 @@ def test_accept_turns_a_candidate_into_a_source(tmp_path: Path, monkeypatch) -> 
 
 def test_dismissed_candidates_are_not_proposed_again(tmp_path: Path) -> None:
     db = _seeded_db(tmp_path, {1: ["https://good.example/1"], 2: ["https://good.example/2"]})
-    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, client=_scan_client())
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
     (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
 
     discovery.dismiss_candidate(candidate["id"], data_dir=tmp_path)
     assert discovery.list_candidates(tmp_path)["count"] == 0
 
-    again = discovery.scan(db=db, data_dir=tmp_path, max_sites=5, client=_scan_client())
+    again = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client()
+    )
     assert again["new_candidates"] == 0
     assert discovery.list_candidates(tmp_path)["count"] == 0
 
@@ -239,7 +344,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("TELECOM_NEWS_DISABLED_SOURCES", raising=False)
     reset_for_tests()
     db = _seeded_db(tmp_path, {1: ["https://good.example/1"], 2: ["https://good.example/2"]})
-    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, client=_scan_client())
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
     registry = ProjectRegistry(tmp_path / "projects" / "registry.json")
     registry.ensure_default()
     with TestClient(create_app(registry=registry)) as test_client:
@@ -299,3 +404,21 @@ def test_gui_has_a_discovery_tab(client) -> None:
     assert 'id="panel-discovery"' in html
     js = client.get("/static/app.js").text
     assert "refreshCandidates" in js and "candidate-add" in js
+
+
+def test_api_edits_the_search_topics(client) -> None:
+    body = client.get("/api/discovery-queries").json()
+    assert body["queries"] == list(discovery.DEFAULT_QUERIES)
+
+    updated = client.put("/api/discovery-queries", json={"queries": ["SMPP routing", "  "]})
+    assert updated.json()["queries"] == ["SMPP routing"]
+
+    restored = client.put("/api/discovery-queries", json={"queries": []})
+    assert restored.json()["queries"] == list(discovery.DEFAULT_QUERIES)
+
+
+def test_gui_exposes_the_search_topics(client) -> None:
+    html = client.get("/").text
+    assert "Search topics" in html
+    assert 'id="discover-queries"' in html
+    assert "refreshQueries" in client.get("/static/app.js").text

@@ -233,9 +233,10 @@ def _default_runner(
         return _cmd_deliver(None, dry_run)
     if stage == "discover":
         # Proposals only: a scan never changes the source registry by itself.
+        # `dry_run` is how the panel asks for a link-only pass (no news search).
         from .cli import _cmd_discover
 
-        return _cmd_discover(max_sites=limit or 12)
+        return _cmd_discover(max_sites=limit or 12, use_search=not dry_run)
     raise ValueError(f"unknown stage {stage!r}")
 
 

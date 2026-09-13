@@ -67,6 +67,7 @@ data/custom_sources.json
 data/removed_sources.json
 data/source_candidates.json
 data/channel_languages.json
+data/discovery_queries.json
 data/last_run.json
 data/logs/run-now.log
 *.patch

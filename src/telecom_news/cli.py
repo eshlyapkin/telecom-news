@@ -166,6 +166,12 @@ def build_parser() -> argparse.ArgumentParser:
     discover_parser.add_argument(
         "--list", action="store_true", dest="show", help="Show stored candidates without scanning"
     )
+    discover_parser.add_argument(
+        "--no-search",
+        action="store_false",
+        dest="use_search",
+        help="Do not query the news search; follow only the links of collected articles",
+    )
     discover_parser.add_argument("--accept", help="Add this candidate id/url as a source")
     discover_parser.add_argument("--dismiss", help="Reject a candidate id/url for good")
 
@@ -1419,6 +1425,7 @@ def _cmd_discover(
     show: bool = False,
     accept: str | None = None,
     dismiss: str | None = None,
+    use_search: bool = True,
 ) -> int:
     """Propose new feeds, or manage the proposals already stored.
 
@@ -1468,6 +1475,7 @@ def _cmd_discover(
             data_dir=config.data_dir,
             max_sites=max_sites,
             min_hit_rate=min_hit_rate,
+            use_search=use_search,
         )
 
     listing = source_discovery.list_candidates(config.data_dir)
@@ -1841,6 +1849,7 @@ def main(argv: list[str] | None = None) -> int:
             show=args.show,
             accept=args.accept,
             dismiss=args.dismiss,
+            use_search=args.use_search,
         )
     if args.command == "prune":
         return _cmd_prune(args.max_age_days, args.dry_run)

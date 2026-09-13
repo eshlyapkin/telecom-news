@@ -3,6 +3,32 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M10c): worldwide topical discovery
+
+Discovery no longer depends on what the current sources happen to link to. It
+now also runs the operator's topics through a news search and takes the
+**publisher** out of each result — never the article.
+
+That distinction is the whole design. A news-search result links to a redirect
+that ends on a consent page and carries no article text, so it is useless as an
+article: deduplication is by URL and every search hit would be a new row, the
+relevance gate would see a title and nothing else, and the "Source" link in the
+post would send readers to a consent wall. But every entry names the publisher's
+own domain, which is exactly the input the existing scan wants: it probes that
+domain for the outlet's real feed, scores its headlines with the operator's AI
+rules, and proposes it. The pipeline then reads the outlet directly.
+
+One query returned 32 distinct publishers — Capacity, Telecompaper, The Fast
+Mode, Developing Telecoms, Telecom Review Africa, ET Telecom — i.e. the trade
+press of this domain worldwide, none of which the registry had.
+
+Topics live in `data/discovery_queries.json` and are editable in the Discovery
+tab, one query per line; a Cyrillic query searches the Russian-language press.
+No API key. One request per query, so keep the list short and the schedule
+daily; `--no-search` (and the panel checkbox) falls back to link-following only.
+
+`pytest -q` → **381 passed**.
+
 ## Session 2026-09-13 (M10b): channel languages switchable from the panel
 
 `TELECOM_NEWS_TARGET_LANGS` is read once per process, so changing the channel's

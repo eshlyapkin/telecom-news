@@ -10,9 +10,16 @@ from ``data/ai_rules.json``. Feeds above the threshold are written to
 one hands it to :func:`custom_sources.add_source`, dismissing one keeps later
 scans from proposing it again.
 
-No search engine and no API key: everything comes from feeds the project already
-reads plus standard feed autodiscovery, which keeps the scan inside the domain
-the operator curates and makes it safe to run on a schedule.
+Two things seed a scan. The links of collected articles map the neighbourhood of
+what the operator already reads; a topical news search widens it to the whole
+world. The search is used to find **publishers**, never articles: Google News
+answers with redirect links that end on a consent page and carry no article
+text, but every entry names the publisher's own domain, so the scan probes that
+domain for its real feed and the pipeline ends up reading the outlet directly —
+with real URLs, real bodies and working deduplication.
+
+No API key is needed. Search is one request per query, so keep the query list
+short and the schedule daily; ``use_search=False`` turns it off entirely.
 """
 
 from __future__ import annotations
@@ -26,7 +33,9 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
+
+import feedparser
 
 from .collectors.base import CollectorError, fetch_url
 from .collectors.rss import parse_feed
@@ -56,6 +65,25 @@ MAX_FAILED_PROBES_PER_SITE = 3
 MIN_ITEMS = 3
 MIN_HIT_RATE = 0.25
 MAX_SAMPLE_TITLES = 5
+
+# Topical search: one request per query, publisher domains taken from the feed's
+# own `source` element. The locale follows the script of the query, so a Russian
+# query reaches the Russian-language press instead of the US edition.
+SEARCH_ENDPOINT = "https://news.google.com/rss/search"
+SEARCH_LOCALES = {
+    "en": {"hl": "en-US", "gl": "US", "ceid": "US:en"},
+    "ru": {"hl": "ru", "gl": "RU", "ceid": "RU:ru"},
+}
+DEFAULT_QUERIES: tuple[str, ...] = (
+    '"A2P SMS"',
+    '"SMS aggregator" OR "messaging aggregator"',
+    '"business messaging" SMS',
+    '"SMS firewall" OR "SMS fraud" OR smishing',
+    '"RCS business messaging"',
+    'SMPP OR SMSC OR "SMS gateway"',
+    "смс рассылки бизнес",
+    "смс мошенничество операторы",
+)
 
 _CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 _HREF_RE = re.compile(r'href=["\'](https?://[^"\'<>\s]+)["\']', re.IGNORECASE)
@@ -277,6 +305,89 @@ def seed_hosts(
     return [(host, samples[host]) for host in ranked[:limit]]
 
 
+def queries_path(data_dir: Path | None = None) -> Path:
+    if data_dir is not None:
+        return Path(data_dir) / "discovery_queries.json"
+    from .config import load_config
+
+    return load_config().data_dir / "discovery_queries.json"
+
+
+def load_queries(data_dir: Path | None = None) -> list[str]:
+    """Operator's search topics, or the built-in defaults."""
+    path = queries_path(data_dir)
+    try:
+        if not path.is_file():
+            return list(DEFAULT_QUERIES)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return list(DEFAULT_QUERIES)
+    if isinstance(raw, dict):
+        raw = raw.get("queries") or []
+    if not isinstance(raw, list):
+        return list(DEFAULT_QUERIES)
+    queries = [str(item).strip() for item in raw if str(item).strip()]
+    return queries or list(DEFAULT_QUERIES)
+
+
+def save_queries(queries: list[str], data_dir: Path | None = None) -> list[str]:
+    """Persist the search topics. An empty list restores the defaults."""
+    cleaned = list(dict.fromkeys(str(item).strip() for item in queries if str(item).strip()))
+    path = queries_path(data_dir)
+    with _LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not cleaned:
+            path.unlink(missing_ok=True)
+            return list(DEFAULT_QUERIES)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps({"queries": cleaned}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    return cleaned
+
+
+def search_url(query: str) -> str:
+    """News-search feed address for one topic, in the locale of its script."""
+    locale = SEARCH_LOCALES["ru" if _CYRILLIC_RE.search(query) else "en"]
+    return f"{SEARCH_ENDPOINT}?q={quote_plus(query)}&" + "&".join(
+        f"{key}={value}" for key, value in locale.items()
+    )
+
+
+def search_publisher_hosts(
+    queries: list[str], *, client: Any | None = None
+) -> list[tuple[str, str]]:
+    """Publisher hosts a topical news search points at, most-cited first.
+
+    Only the publisher is taken from the search result. Its links are redirects
+    that end on a consent page and carry no article text, so they are useless as
+    articles — but each entry names the outlet's own domain, which is exactly
+    what the scan needs in order to go and find that outlet's real feed.
+    """
+    counts: dict[str, int] = {}
+    known = known_hosts()
+    for query in queries:
+        try:
+            body = fetch_url(search_url(query), timeout=PROBE_TIMEOUT, max_retries=1, client=client)
+        except CollectorError as exc:
+            logger.debug("discovery: search failed for %r: %s", query, exc)
+            continue
+        parsed = feedparser.parse(body)
+        for entry in parsed.entries:
+            source = entry.get("source") or {}
+            href = str(source.get("href") or "")
+            if not href:
+                continue
+            host = host_of(href)
+            if _is_ignorable(host) or host in known:
+                continue
+            counts[host] = counts.get(host, 0) + 1
+    ranked = sorted(counts, key=lambda host: (-counts[host], host))
+    return [(host, f"https://{host}/") for host in ranked]
+
+
 def feed_urls_for_site(site_url: str, *, client: Any | None = None) -> list[str]:
     """Feed addresses advertised by a page, then the conventional paths.
 
@@ -362,9 +473,16 @@ def scan(
     data_dir: Path | None = None,
     max_sites: int = 12,
     min_hit_rate: float = MIN_HIT_RATE,
+    use_search: bool = True,
     client: Any | None = None,
 ) -> dict[str, Any]:
-    """One discovery pass. Returns a summary and persists new candidates."""
+    """One discovery pass. Returns a summary and persists new candidates.
+
+    Topical search results come first: they answer "who writes about this
+    anywhere in the world", while the links of collected articles only map the
+    neighbourhood of what is already being read. With ``use_search=False`` the
+    scan makes no search requests at all.
+    """
     state = load_state(data_dir)
     dismissed = set(state["dismissed"])
     # Dismiss is a verdict about the outlet, not about one URL of it: a site
@@ -374,9 +492,27 @@ def scan(
     existing = {str(item.get("feed_url")) for item in state["candidates"]}
     known = known_hosts()
 
+    seeds: list[tuple[str, str]] = []
+    seen_hosts: set[str] = set()
+    origins: dict[str, str] = {}
+    searched = 0
+    if use_search:
+        queries = load_queries(data_dir)
+        searched = len(queries)
+        print(f"discovery: searching {searched} topic(s) worldwide")
+        for host, url in search_publisher_hosts(queries, client=client):
+            if host not in seen_hosts:
+                seen_hosts.add(host)
+                seeds.append((host, url))
+                origins[host] = f"news search for the configured topics ({host})"
+    for host, url in seed_hosts(db, limit=max_sites):
+        if host not in seen_hosts:
+            seen_hosts.add(host)
+            seeds.append((host, url))
+
     checked = 0
     added: list[Candidate] = []
-    for host, sample_url in seed_hosts(db, limit=max_sites):
+    for host, sample_url in seeds[:max_sites]:
         if host in known or host in dismissed_hosts:
             continue
         scheme = urlparse(sample_url).scheme or "https"
@@ -403,7 +539,7 @@ def scan(
                 site_url=site_url,
                 title=host,
                 language=str(verdict["language"]),
-                origin=f"linked from collected articles ({host})",
+                origin=origins.get(host, f"linked from collected articles ({host})"),
                 items=int(verdict["items"]),
                 hits=int(verdict["hits"]),
                 hit_rate=float(verdict["hit_rate"]),
@@ -427,8 +563,12 @@ def scan(
         state["scanned_at"] = _now()
         save_state(state, data_dir)
 
-    print(f"Discovery: probed {checked} site(s), {len(added)} new candidate(s).")
+    print(
+        f"Discovery: searched {searched} topic(s), probed {checked} site(s), "
+        f"{len(added)} new candidate(s)."
+    )
     return {
+        "searched_topics": searched,
         "checked_sites": checked,
         "new_candidates": len(added),
         "candidates": [candidate.to_dict() for candidate in added],

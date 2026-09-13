@@ -196,13 +196,30 @@
       </div>
       <p class="banner" id="discover-banner" hidden></p>
       <p class="muted small">
-        A scan follows the outbound links of already collected articles, probes each site for
-        an RSS/Atom feed and scores it with <strong>your AI rules</strong> — the share of recent
-        items that pass the messaging gate. Nothing is added to the pipeline automatically:
-        <strong>Add</strong> turns a proposal into a normal source,
-        <strong>Dismiss</strong> keeps later scans quiet about it.
-        Schedule <code>python -m telecom_news discover</code> to keep watching continuously.
+        A scan looks for publishers two ways: a worldwide news search for the topics below,
+        and the outbound links of articles already collected. Each site it finds is probed
+        for an RSS/Atom feed and scored with <strong>your AI rules</strong> — the share of
+        recent headlines that pass the messaging gate. Nothing is added to the pipeline
+        automatically: <strong>Add</strong> turns a proposal into a normal source,
+        <strong>Dismiss</strong> silences that site for good.
+        Schedule <code>scripts/run_discovery.sh</code> to keep watching continuously.
       </p>
+      <div class="card static">
+        <h2>Search topics</h2>
+        <label class="block">One query per line. Russian queries search the Russian-language
+          press, the rest search in English. Operators (quotes, OR) work.
+          <textarea id="discover-queries" rows="6" spellcheck="false"></textarea>
+        </label>
+        <div class="actions">
+          <button type="button" class="btn ok" id="btn-save-queries">Save topics</button>
+          <button type="button" class="btn" id="btn-reset-queries">Restore defaults</button>
+          <label class="check">
+            <input type="checkbox" id="discover-use-search" checked />
+            use the news search (off = follow article links only)
+          </label>
+        </div>
+        <p class="muted small" id="queries-status"></p>
+      </div>
       <p class="muted small" id="candidates-meta"></p>
       <div id="candidates-list"></div>
     </section>

@@ -17,7 +17,13 @@ from ..config import load_config, refresh_sources
 from ..custom_sources import add_source, delete_source
 from ..pipeline_run import get_run_status, start_run
 from ..projects import DEFAULT_PROJECT_ID, ProjectRegistry, get_registry
-from ..source_discovery import accept_candidate, dismiss_candidate, list_candidates
+from ..source_discovery import (
+    accept_candidate,
+    dismiss_candidate,
+    list_candidates,
+    load_queries,
+    save_queries,
+)
 from ..source_overrides import list_sources_for_api, set_source_enabled
 from .ops import ops_status, project_published, project_queue
 
@@ -76,6 +82,13 @@ class CandidateAcceptBody(BaseModel):
 
 class DiscoverBody(BaseModel):
     max_sites: int = Field(default=12, ge=1, le=60)
+    use_search: bool = True
+
+
+class DiscoveryQueriesBody(BaseModel):
+    """Topics the worldwide news search looks for. Empty restores the defaults."""
+
+    queries: list[str] = Field(default_factory=list, max_length=40)
 
 
 class ChannelLanguagesBody(BaseModel):
@@ -336,6 +349,27 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         """Feeds discovery proposes; nothing here is part of the pipeline yet."""
         return list_candidates(config.data_dir)
 
+    @app.get("/api/discovery-queries")
+    def discovery_queries() -> dict[str, Any]:
+        from ..source_discovery import DEFAULT_QUERIES, queries_path
+
+        return {
+            "queries": load_queries(config.data_dir),
+            "defaults": list(DEFAULT_QUERIES),
+            "path": str(queries_path(config.data_dir)),
+        }
+
+    @app.put("/api/discovery-queries")
+    def set_discovery_queries(body: DiscoveryQueriesBody) -> dict[str, Any]:
+        from ..source_discovery import DEFAULT_QUERIES, queries_path
+
+        saved = save_queries(body.queries, config.data_dir)
+        return {
+            "queries": saved,
+            "defaults": list(DEFAULT_QUERIES),
+            "path": str(queries_path(config.data_dir)),
+        }
+
     @app.post("/api/source-candidates/scan")
     def scan_for_sources(body: DiscoverBody) -> dict[str, Any]:
         """Start a discovery pass in the background (shares the run-now slot)."""
@@ -347,6 +381,7 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
                 db_path=reg.resolve_db_path(project, config.data_dir),
                 stage="discover",
                 limit=body.max_sites,
+                dry_run=not body.use_search,  # dry_run carries "skip the search"
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

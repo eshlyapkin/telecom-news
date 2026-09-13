@@ -53,7 +53,10 @@ function showTab(name) {
   if (name === "queue") refreshQueue();
   if (name === "published") refreshPublished();
   if (name === "sources") refreshSources();
-  if (name === "discovery") refreshCandidates();
+  if (name === "discovery") {
+    refreshCandidates();
+    refreshQueries();
+  }
   if (name === "ai-rules") refreshRules();
 }
 
@@ -533,6 +536,37 @@ async function addSource() {
 
 /* Discovery: proposals only. Accepting one calls the same API the Sources tab
    uses, so a candidate becomes an ordinary custom source. */
+/* Search queries are split on newlines only: a query may legitimately contain a
+   comma, unlike the AI-rules term lists. */
+function textToLines(text) {
+  return String(text || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function refreshQueries() {
+  try {
+    const data = await fetchJson("/api/discovery-queries");
+    el("discover-queries").value = (data.queries || []).join("\n");
+    el("queries-status").textContent = `Saved in ${data.path}`;
+  } catch (err) {
+    el("queries-status").textContent = err.message;
+  }
+}
+
+async function saveQueries(queries) {
+  const data = await fetchJson("/api/discovery-queries", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ queries }),
+  });
+  el("discover-queries").value = (data.queries || []).join("\n");
+  el("queries-status").textContent = queries.length
+    ? "Topics saved. They apply to the next scan."
+    : "Restored the built-in topics.";
+}
+
 async function refreshCandidates() {
   try {
     const data = await fetchJson("/api/source-candidates");
@@ -605,7 +639,10 @@ async function startDiscoveryScan() {
   const data = await fetchJson("/api/source-candidates/scan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_sites: Number(el("discover-sites").value) || 12 }),
+    body: JSON.stringify({
+      max_sites: Number(el("discover-sites").value) || 12,
+      use_search: el("discover-use-search").checked,
+    }),
   });
   banner.hidden = false;
   banner.className = "banner";
@@ -733,6 +770,9 @@ el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();
 el("btn-refresh-candidates").onclick = () => refreshCandidates();
 el("btn-discover-scan").onclick = () => startDiscoveryScan().catch((e) => alert(e.message));
+el("btn-save-queries").onclick = () =>
+  saveQueries(textToLines(el("discover-queries").value)).catch((e) => alert(e.message));
+el("btn-reset-queries").onclick = () => saveQueries([]).catch((e) => alert(e.message));
 el("btn-refresh-rules").onclick = () => refreshRules();
 el("btn-save-rules").onclick = () => saveRules().catch((e) => alert(e.message));
 el("btn-reset-rules").onclick = () => resetRules().catch((e) => alert(e.message));
