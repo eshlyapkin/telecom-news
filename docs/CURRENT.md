@@ -3,6 +3,24 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M10b): channel languages switchable from the panel
+
+`TELECOM_NEWS_TARGET_LANGS` is read once per process, so changing the channel's
+languages meant editing the env file and restarting serve — and the scheduled
+pipeline kept the old value until its next start. The Overview card now writes
+`data/channel_languages.json`, which `load_config()` reads every time: the API
+rebuilds its config per request and each pipeline cycle is a fresh process, so a
+change reaches the next cycle with nothing to restart. `Use env value` deletes
+the file and hands control back to the environment, which keeps a scripted
+deployment authoritative.
+
+The card also shows where each language would be posted and names any language
+with no chat id at all, since that combination silently publishes nothing.
+
+Verified across processes: `PUT {"langs":["ru"]}` → a separate `load_config()`
+in another process returns `('ru',)`; back to `["ru","en"]` → `('ru','en')` with
+both mapped to the one chat id. `pytest -q` → **373 passed**.
+
 ## Session 2026-09-13 (M10): translated headlines, Published tab, source discovery
 
 See D-024.

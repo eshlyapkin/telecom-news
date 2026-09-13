@@ -88,6 +88,22 @@
           <h2>Last publication</h2>
           <div id="last-pub" class="kv"></div>
         </div>
+        <div class="card static">
+          <h2>Channel languages</h2>
+          <div id="lang-choices" class="lang-choices"></div>
+          <div class="actions">
+            <button type="button" class="btn ok" id="btn-save-langs">Apply</button>
+            <button type="button" class="btn" id="btn-reset-langs">Use env value</button>
+          </div>
+          <div id="lang-targets" class="kv muted small"></div>
+          <p class="muted small" id="lang-status"></p>
+          <p class="muted small">
+            One post per language. Two languages sharing a chat id means both versions
+            land in the same channel; set <code>TELEGRAM_CHAT_ID_&lt;LANG&gt;</code> for a
+            separate one. The next <code>process</code> cycle renders a newly enabled
+            language for articles still inside the publish window.
+          </p>
+        </div>
       </div>
       <div class="cards" id="project-cards"></div>
     </section>

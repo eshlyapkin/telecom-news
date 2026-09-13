@@ -85,6 +85,18 @@ class Config:
                 f"unsupported publication language(s) {unsupported or raw_langs!r}; "
                 f"supported: {', '.join(SUPPORTED_LANGS)}"
             )
+        # The control panel can override the env value at runtime. Every process
+        # builds its config fresh (a pipeline cycle is a new process, the API
+        # rebuilds per request), so a change in the panel reaches the next cycle
+        # without restarting anything. A malformed or missing file simply leaves
+        # the environment in charge.
+        from .channel_languages import load_override
+
+        override = load_override(self.data_dir)
+        if override:
+            supported_override = tuple(lang for lang in override if lang in SUPPORTED_LANGS)
+            if supported_override:
+                langs = supported_override
         object.__setattr__(self, "target_langs", langs)
         channel_ids: list[tuple[str, str]] = []
         default_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")

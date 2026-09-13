@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..ai_rules import load_rules, reset_rules, rules_for_api, save_rules
+from ..channel_languages import clear_override, languages_for_api, save_languages
 from ..config import load_config, refresh_sources
 from ..custom_sources import add_source, delete_source
 from ..pipeline_run import get_run_status, start_run
@@ -75,6 +76,12 @@ class CandidateAcceptBody(BaseModel):
 
 class DiscoverBody(BaseModel):
     max_sites: int = Field(default=12, ge=1, le=60)
+
+
+class ChannelLanguagesBody(BaseModel):
+    """Languages the channel publishes, chosen live in the panel."""
+
+    langs: list[str] = Field(min_length=1, max_length=8)
 
 
 class RunNowBody(BaseModel):
@@ -304,6 +311,25 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/channel-languages")
+    def channel_languages() -> dict[str, Any]:
+        return languages_for_api(config.data_dir)
+
+    @app.put("/api/channel-languages")
+    def set_channel_languages(body: ChannelLanguagesBody) -> dict[str, Any]:
+        """Change the publication languages; the next cycle uses them."""
+        try:
+            save_languages(body.langs, config.data_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return languages_for_api(config.data_dir)
+
+    @app.delete("/api/channel-languages")
+    def reset_channel_languages() -> dict[str, Any]:
+        """Drop the panel override; TELECOM_NEWS_TARGET_LANGS is in charge again."""
+        clear_override(config.data_dir)
+        return languages_for_api(config.data_dir)
 
     @app.get("/api/source-candidates")
     def source_candidates() -> dict[str, Any]:

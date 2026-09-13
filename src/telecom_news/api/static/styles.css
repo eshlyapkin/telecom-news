@@ -168,3 +168,7 @@ details summary { cursor: pointer; }
 .samples li { margin: 0.15rem 0; }
 label.inline { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
 label.inline input { width: 4.5rem; }
+
+/* Channel languages: checkbox row on the Overview card. */
+.lang-choices { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.lang-choices .check { display: inline-flex; align-items: center; gap: 0.35rem; }

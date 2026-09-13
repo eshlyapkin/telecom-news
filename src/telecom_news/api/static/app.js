@@ -187,6 +187,61 @@ function renderStatus(status) {
   renderRun(status.run || { status: "idle" });
 }
 
+/* Channel languages: a live override of TELECOM_NEWS_TARGET_LANGS. Every process
+   rebuilds its config, so Apply reaches the next pipeline cycle on its own. */
+const LANG_FLAGS = { ru: "🇷🇺", en: "🇬🇧" };
+
+async function refreshLanguages() {
+  try {
+    const data = await fetchJson("/api/channel-languages");
+    const active = new Set(data.langs || []);
+    el("lang-choices").innerHTML = (data.supported || [])
+      .map(
+        (lang) => `<label class="check">
+          <input type="checkbox" class="lang-box" value="${escapeHtml(lang)}"
+            ${active.has(lang) ? "checked" : ""} />
+          ${LANG_FLAGS[lang] || ""} ${escapeHtml(lang)}
+        </label>`
+      )
+      .join("");
+    el("lang-targets").innerHTML = (data.channel_targets || [])
+      .map(
+        (t) =>
+          `<div><span>${escapeHtml(t.lang)}</span><span>${escapeHtml(t.chat_id)}</span></div>`
+      )
+      .join("");
+    const unreachable = data.unreachable || [];
+    el("lang-status").textContent =
+      (data.source === "panel" ? "Set in this panel." : "Following the env file.") +
+      (unreachable.length
+        ? ` No chat id for: ${unreachable.join(", ")} — those posts cannot be sent.`
+        : "");
+  } catch (err) {
+    el("lang-status").textContent = err.message;
+  }
+}
+
+async function saveLanguages() {
+  const langs = [...document.querySelectorAll(".lang-box:checked")].map((b) => b.value);
+  if (!langs.length) {
+    el("lang-status").textContent = "Pick at least one language.";
+    return;
+  }
+  await fetchJson("/api/channel-languages", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ langs }),
+  });
+  await refreshLanguages();
+  await refreshAll();
+}
+
+async function resetLanguages() {
+  await fetchJson("/api/channel-languages", { method: "DELETE" });
+  await refreshLanguages();
+  await refreshAll();
+}
+
 function renderCards(dash) {
   el("project-cards").innerHTML = (dash.projects || [])
     .map((p) => {
@@ -249,6 +304,7 @@ async function refreshAll() {
     renderKpis(status, dash);
     renderStatus(status);
     renderCards(dash);
+    refreshLanguages();
     const runBusy = status.run && status.run.status === "running";
     setHealth(
       !status.publish_effectively_paused && !runBusy,
@@ -670,6 +726,8 @@ document.querySelectorAll(".tab").forEach((btn) => {
 });
 el("btn-refresh").onclick = () => refreshAll();
 el("btn-refresh-queue").onclick = () => refreshQueue();
+el("btn-save-langs").onclick = () => saveLanguages().catch((e) => alert(e.message));
+el("btn-reset-langs").onclick = () => resetLanguages().catch((e) => alert(e.message));
 el("btn-refresh-published").onclick = () => refreshPublished();
 el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();
