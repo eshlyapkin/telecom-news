@@ -1088,7 +1088,12 @@ def _cmd_publish(
                     str(chat_id), article.id, lang, status="sent", message_id=message_id
                 )
                 completions.append(True)
-                print(f"[{article.id}] published ({lang}): {article.title or '(no title)'}")
+                # The headline that went out, not the article's original one:
+                # an English post carries an English headline (D-024).
+                print(
+                    f"[{article.id}] published ({lang}): "
+                    f"{headline or article.title or '(no title)'}"
+                )
             except TelegramError as exc:
                 errors += 1
                 completions.append(False)

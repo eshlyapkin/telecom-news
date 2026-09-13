@@ -29,7 +29,19 @@ general tech feed 0%, and an ecommerce email-marketing blog 10% — the last one
 scored 90% while the gate looked at full text, because such a platform mentions
 SMS in nearly every post. Headlines are what a publisher actually writes about.
 
-**Verified:** `pytest -q` → **362 passed**; ruff / `git diff --check` clean.
+**Scheduling:** `scripts/run_discovery.sh` is the scheduler entry point — same
+env file and the same "never two at once" lock as `run_pipeline.sh`, its own log
+in `data/logs/discovery.log`, `TELECOM_NEWS_DISCOVER_SITES` for the breadth.
+Run it **daily**, not hourly: a 25-site pass takes ~2 minutes and the link
+neighbourhood changes slowly.
+
+**Verified:** `pytest -q` → **363 passed**; ruff / `git diff --check` clean.
+Live scan: 25 sites in 2m05s, one proposal — `eztexting.com` (70% of headlines
+on topic), left for the operator to accept or dismiss.
+
+**Channel:** the three English posts that went out before the headline fix
+(message_id 80–82, with Russian headlines) were deleted from the channel at the
+operator's request and re-sent with translated headlines.
 
 ## Session 2026-09-13 (ops): scheduler env, AI-rules contract, rendition backfill
 

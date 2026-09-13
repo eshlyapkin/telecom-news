@@ -41,13 +41,13 @@ class _FakeLLM:
 # --- scheduler environment -------------------------------------------------
 
 
-def _sandbox_pipeline(tmp_path: Path) -> Path:
-    """Copy of run_pipeline.sh whose `.venv/bin/python` only reports its env."""
+def _sandbox_pipeline(tmp_path: Path, script: str = "run_pipeline.sh") -> Path:
+    """Copy of a scheduler script whose `.venv/bin/python` only reports its env."""
     root = tmp_path / "project"
     (root / "scripts").mkdir(parents=True)
     (root / ".venv" / "bin").mkdir(parents=True)
-    (root / "scripts" / "run_pipeline.sh").write_text(
-        (REPO_ROOT / "scripts" / "run_pipeline.sh").read_text(encoding="utf-8"),
+    (root / "scripts" / script).write_text(
+        (REPO_ROOT / "scripts" / script).read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     stub = root / ".venv" / "bin" / "python"
@@ -59,21 +59,20 @@ def _sandbox_pipeline(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     stub.chmod(0o755)
-    (root / "scripts" / "run_pipeline.sh").chmod(0o755)
+    (root / "scripts" / script).chmod(0o755)
     return root
 
 
-def _run_pipeline(root: Path, env_file: Path | None) -> str:
+def _run_pipeline(root: Path, env_file: Path | None, script: str = "run_pipeline.sh") -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("TELECOM_NEWS")}
     env.pop("TELEGRAM_CHAT_ID", None)
     env.pop("TELEGRAM_BOT_TOKEN", None)
     # A path that does not exist means "no env file", which is how the guard in
     # the script is switched off.
     env["TELECOM_NEWS_ENV_FILE"] = str(env_file or (root / "no-such-env"))
-    subprocess.run(
-        ["bash", str(root / "scripts" / "run_pipeline.sh")], env=env, check=True, timeout=60
-    )
-    return (root / "data" / "logs" / "pipeline.log").read_text(encoding="utf-8")
+    subprocess.run(["bash", str(root / "scripts" / script)], env=env, check=True, timeout=60)
+    log = "discovery.log" if "discovery" in script else "pipeline.log"
+    return (root / "data" / "logs" / log).read_text(encoding="utf-8")
 
 
 def test_run_pipeline_loads_the_env_file(tmp_path: Path) -> None:
@@ -232,3 +231,15 @@ def test_sources_reports_the_pipeline_registry_not_the_catalog_rows(capsys) -> N
     # The catalog holds fewer news entries than the registry (hand-written
     # sources have no catalog row), so the two numbers must not be confused.
     assert enabled > 0
+
+
+def test_run_discovery_loads_the_env_and_scans(tmp_path: Path) -> None:
+    """The scheduled discovery pass needs the same configuration as the pipeline."""
+    root = _sandbox_pipeline(tmp_path, script="run_discovery.sh")
+    env_file = tmp_path / "env"
+    env_file.write_text(
+        "TELEGRAM_CHAT_ID='-100999'\nTELECOM_NEWS_TARGET_LANGS=ru,en\n", encoding="utf-8"
+    )
+    log = _run_pipeline(root, env_file, script="run_discovery.sh")
+    assert "CHAT_ID=-100999" in log
+    assert "ARGS=-m telecom_news discover --max-sites 25" in log
