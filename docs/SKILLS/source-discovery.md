@@ -28,6 +28,31 @@ Two seeds, search first:
 2. **Outbound links** of articles already collected, ranked by how many distinct
    articles cite a host.
 
+## Writing a topic by hand
+
+Only needed when you want something the AI rules do not express — otherwise leave
+the box alone and edit the rules instead.
+
+**One line = one search request.** Blank lines are dropped, duplicates are
+removed, at most 40 lines. An empty box goes back to the topics generated from
+the rules.
+
+| Write | Meaning |
+|---|---|
+| `"A2P SMS"` | the phrase as a whole |
+| `"SMS firewall" OR "SMS fraud" OR smishing` | any of the three, one request |
+| `SMS firewall` | both words, not necessarily together — broader |
+| `смс мошенничество операторы` | Cyrillic anywhere on the line → Russian-language press |
+
+Keep a line specific. Measured against the live search: `"A2P SMS"` returned 86
+articles from 61 publishers, all on topic; a bare `sms` returned 100 articles
+whose first hit was a high-school sports round-up. The scan only takes the
+publisher from each result, so a noisy line wastes a request and fills the probe
+queue with irrelevant sites.
+
+Quotes and OR are the operators worth using. There is no syntax of our own: the
+line is passed to the news search as typed.
+
 ## How a site is judged
 
 The share of recent **headlines** that pass your keyword gate — the same rules

@@ -241,8 +241,12 @@
           Edit below only to search for something the rules do not express; Russian queries
           search the Russian-language press.
         </p>
-        <label class="block">One query per line. Operators (quotes, OR) work.
-          <textarea id="discover-queries" rows="6" spellcheck="false"></textarea>
+        <label class="block">One line = one search request. Put a phrase in
+          &quot;quotes&quot;, combine alternatives with OR, and keep each line specific —
+          a bare word like <code>sms</code> returns school sports results.
+          A line containing Cyrillic searches the Russian-language press.
+          <textarea id="discover-queries" rows="6" spellcheck="false"
+            placeholder='"A2P SMS"&#10;"SMS firewall" OR "SMS fraud" OR smishing&#10;смс мошенничество операторы'></textarea>
         </label>
         <div class="actions">
           <button type="button" class="btn ok" id="btn-save-queries">Save topics</button>
