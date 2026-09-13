@@ -90,6 +90,8 @@ class DiscoverBody(BaseModel):
     use_search: bool = True
     # rss | sitemap | both — what the scan is willing to propose.
     look_for: str = "both"
+    # Probe sites again even if they were checked recently.
+    recheck: bool = False
 
 
 class DiscoveryQueriesBody(BaseModel):
@@ -382,6 +384,15 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
             "path": str(queries_path(config.data_dir)),
         }
 
+    @app.get("/api/discovery-history")
+    def discovery_history(limit: int = 200) -> dict[str, Any]:
+        """Which sites the scans have probed, when, and what came of it."""
+        from ..source_discovery import list_checked
+
+        if limit < 1 or limit > 1000:
+            raise HTTPException(status_code=400, detail="limit must be 1..1000")
+        return list_checked(config.data_dir, limit=limit)
+
     @app.get("/api/discovery-queries")
     def discovery_queries() -> dict[str, Any]:
         return _queries_payload()
@@ -409,7 +420,11 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
                 db_path=reg.resolve_db_path(project, config.data_dir),
                 stage="discover",
                 limit=body.max_sites,
-                options={"use_search": body.use_search, "look_for": body.look_for},
+                options={
+                    "use_search": body.use_search,
+                    "look_for": body.look_for,
+                    "recheck": body.recheck,
+                },
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

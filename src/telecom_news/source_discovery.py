@@ -29,7 +29,7 @@ import logging
 import re
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,15 @@ DEFAULT_QUERIES: tuple[str, ...] = (
 # acronym like "sms" or "ss7" is not. Terms are then OR-ed in small groups, and a
 # scan works through the groups a few at a time, so the whole rule set gets
 # covered over several runs instead of an arbitrary dozen terms being picked.
+# How long a site stays "already looked at". Without this a scan re-probes the
+# same hosts every run and never reaches anything new; with it forever, a site
+# that had no feed in September would never be looked at again. A month is short
+# enough to catch an outlet that starts publishing a feed and long enough that
+# consecutive scans spend their budget on sites nobody has checked yet.
+RECHECK_AFTER_DAYS = 30
+# How much wider than the probe budget the candidate pool is drawn.
+SEED_POOL_FACTOR = 5
+
 MIN_SINGLE_WORD_QUERY_LEN = 5
 TERMS_PER_QUERY = 5
 QUERIES_PER_SCAN = 4
@@ -231,6 +240,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _parse_moment(value: str) -> datetime | None:
+    """Read a timestamp this module wrote; anything unreadable means "unknown"."""
+    try:
+        moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
 def candidates_path(data_dir: Path | None = None) -> Path:
     if data_dir is not None:
         return Path(data_dir) / "source_candidates.json"
@@ -248,6 +266,9 @@ def load_state(data_dir: Path | None = None) -> dict[str, Any]:
         "scanned_at": None,
         # Where the next scan resumes in the topic list (see `queries_for_scan`).
         "query_offset": 0,
+        # host -> what the last probe found, so a scan can skip what it has
+        # already looked at and the operator can see where it has been.
+        "checked": {},
     }
     if not path.is_file():
         return empty
@@ -263,11 +284,13 @@ def load_state(data_dir: Path | None = None) -> dict[str, Any]:
         offset = int(raw.get("query_offset") or 0)
     except (TypeError, ValueError):
         offset = 0
+    checked = raw.get("checked")
     return {
         "candidates": candidates,
         "dismissed": dismissed,
         "scanned_at": raw.get("scanned_at"),
         "query_offset": max(0, offset),
+        "checked": checked if isinstance(checked, dict) else {},
     }
 
 
@@ -670,6 +693,7 @@ def scan(
     min_hit_rate: float = MIN_HIT_RATE,
     use_search: bool = True,
     look_for: str = LOOK_FOR_BOTH,
+    recheck: bool = False,
     client: Any | None = None,
 ) -> dict[str, Any]:
     """One discovery pass. Returns a summary and persists new candidates.
@@ -682,6 +706,10 @@ def scan(
     ``look_for`` picks what counts as a source: ``"rss"`` only feeds,
     ``"sitemap"`` only sitemaps (of outlets that publish no feed), ``"both"``
     the feed first and the sitemap as a fallback.
+
+    Sites looked at in the last :data:`RECHECK_AFTER_DAYS` days are skipped, so a
+    repeat scan spends its budget on hosts nobody has checked yet; ``recheck``
+    ignores that and goes over everything again.
     """
     look_for = (look_for or LOOK_FOR_BOTH).strip().lower()
     if look_for not in LOOK_FOR_CHOICES:
@@ -713,27 +741,58 @@ def scan(
                 seen_hosts.add(host)
                 seeds.append((host, url))
                 origins[host] = f"news search for the configured topics ({host})"
-    for host, url in seed_hosts(db, limit=max_sites):
+    # Ask for more seeds than we intend to probe: hosts skipped because they were
+    # checked recently must be replaced by the next ones down the ranking, or a
+    # repeat scan would simply find nothing left to look at.
+    for host, url in seed_hosts(db, limit=max_sites * SEED_POOL_FACTOR):
         if host not in seen_hosts:
             seen_hosts.add(host)
             seeds.append((host, url))
 
+    history: dict[str, Any] = dict(state["checked"])
+    fresh_cutoff = datetime.now(timezone.utc) - timedelta(days=RECHECK_AFTER_DAYS)
+
+    def _recently_checked(host: str) -> bool:
+        if recheck:
+            return False
+        moment = _parse_moment(str((history.get(host) or {}).get("last_checked_at") or ""))
+        return moment is not None and moment > fresh_cutoff
+
+    def _record(host: str, outcome: str, **detail: Any) -> None:
+        history[host] = {"last_checked_at": _now(), "outcome": outcome, **detail}
+
     checked = 0
+    skipped = 0
     added: list[Candidate] = []
-    for host, sample_url in seeds[:max_sites]:
+    for host, sample_url in seeds:
+        if checked >= max_sites:
+            break
         if host in known or host in dismissed_hosts:
+            continue
+        if _recently_checked(host):
+            skipped += 1
             continue
         scheme = urlparse(sample_url).scheme or "https"
         site_url = f"{scheme}://{host}/"
         checked += 1
         print(f"discovery: probing {host}")
+
+        # One verdict per site, recorded whatever happens: the history is what
+        # lets the next scan skip this host and the operator see where the scan
+        # has been. "off_topic" keeps the best score seen so a rejection can be
+        # told apart from a site that answered nothing at all.
+        outcome = "unreachable"
+        detail: dict[str, Any] = {}
         failed_probes = 0
         proposed = False
+
         feed_urls = (
             feed_urls_for_site(site_url, client=client)
             if look_for in (LOOK_FOR_RSS, LOOK_FOR_BOTH)
             else []
         )
+        if feed_urls or look_for == LOOK_FOR_SITEMAP:
+            outcome = "nothing_found"
         for feed_url in feed_urls:
             if failed_probes >= MAX_FAILED_PROBES_PER_SITE:
                 break
@@ -745,7 +804,18 @@ def scan(
                 failed_probes += 1
                 continue
             verdict = evaluate_feed(body, feed_url=feed_url)
-            if verdict is None or verdict["hit_rate"] < min_hit_rate:
+            if verdict is None:
+                continue
+            if verdict["hit_rate"] < min_hit_rate:
+                if float(verdict["hit_rate"]) >= float(detail.get("hit_rate", -1)):
+                    outcome = "off_topic"
+                    detail = {
+                        "kind": "rss",
+                        "url": feed_url,
+                        "hit_rate": float(verdict["hit_rate"]),
+                        "hits": int(verdict["hits"]),
+                        "items": int(verdict["items"]),
+                    }
                 continue
             candidate = Candidate(
                 id=candidate_id(feed_url),
@@ -762,11 +832,19 @@ def scan(
             )
             added.append(candidate)
             existing.add(feed_url)
+            proposed = True
+            outcome = "proposed"
+            detail = {
+                "kind": "rss",
+                "url": feed_url,
+                "hit_rate": candidate.hit_rate,
+                "hits": candidate.hits,
+                "items": candidate.items,
+            }
             print(
                 f"discovery: candidate {candidate.id} — {candidate.hits}/{candidate.items} "
                 f"items on topic ({candidate.hit_rate:.0%})"
             )
-            proposed = True
             break  # one feed per host is enough to propose
 
         if not proposed and look_for in (LOOK_FOR_SITEMAP, LOOK_FOR_BOTH):
@@ -797,10 +875,30 @@ def scan(
                 )
                 added.append(candidate)
                 existing.add(sitemap_url)
+                proposed = True
+                outcome = "proposed"
+                detail = {
+                    "kind": "sitemap",
+                    "url": sitemap_url,
+                    "hit_rate": candidate.hit_rate,
+                    "hits": candidate.hits,
+                    "items": candidate.items,
+                }
                 print(
                     f"discovery: candidate {candidate.id} (sitemap) — "
                     f"{candidate.hits}/{candidate.items} on topic ({candidate.hit_rate:.0%})"
                 )
+            elif verdict and float(verdict["hit_rate"]) >= float(detail.get("hit_rate", -1)):
+                outcome = "off_topic"
+                detail = {
+                    "kind": "sitemap",
+                    "url": sitemap_url,
+                    "hit_rate": float(verdict["hit_rate"]),
+                    "hits": int(verdict["hits"]),
+                    "items": int(verdict["items"]),
+                }
+
+        _record(host, outcome, **detail)
 
     with _LOCK:
         state = load_state(data_dir)
@@ -812,20 +910,65 @@ def scan(
         # Resume where this pass stopped, so consecutive scans work through the
         # whole rule set instead of re-running the same few topics.
         state["query_offset"] = int(state.get("query_offset") or 0) + searched
+        state["checked"] = {**state.get("checked", {}), **history}
         save_state(state, data_dir)
 
     print(
         f"Discovery: searched {searched} topic(s), probed {checked} site(s), "
+        f"skipped {skipped} checked in the last {RECHECK_AFTER_DAYS} day(s), "
         f"{len(added)} new candidate(s)."
     )
     return {
         "searched_topics": searched,
         "topics_total": len(load_queries(data_dir)) if use_search else 0,
         "checked_sites": checked,
+        "skipped_sites": skipped,
         "look_for": look_for,
         "new_candidates": len(added),
         "candidates": [candidate.to_dict() for candidate in added],
         "scanned_at": state["scanned_at"],
+    }
+
+
+OUTCOME_LABELS: dict[str, str] = {
+    "proposed": "proposed as a candidate",
+    "off_topic": "found a feed, but its headlines are off topic",
+    "nothing_found": "no readable feed or dated sitemap",
+    "unreachable": "site did not answer",
+}
+
+
+def list_checked(data_dir: Path | None = None, *, limit: int = 200) -> dict[str, Any]:
+    """Where the scans have been: one row per host, most recent first."""
+    state = load_state(data_dir)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=RECHECK_AFTER_DAYS)
+    rows: list[dict[str, Any]] = []
+    for host, entry in state["checked"].items():
+        if not isinstance(entry, dict):
+            continue
+        moment = _parse_moment(str(entry.get("last_checked_at") or ""))
+        outcome = str(entry.get("outcome") or "")
+        rows.append(
+            {
+                "host": host,
+                "last_checked_at": entry.get("last_checked_at"),
+                "outcome": outcome,
+                "outcome_label": OUTCOME_LABELS.get(outcome, outcome),
+                "kind": entry.get("kind"),
+                "url": entry.get("url"),
+                "hit_rate": entry.get("hit_rate"),
+                "hits": entry.get("hits"),
+                "items": entry.get("items"),
+                # A scan skips a host until this turns false, unless "re-check" is asked.
+                "due_for_recheck": moment is None or moment <= cutoff,
+            }
+        )
+    rows.sort(key=lambda row: str(row["last_checked_at"] or ""), reverse=True)
+    return {
+        "checked": rows[:limit],
+        "count": len(rows),
+        "recheck_after_days": RECHECK_AFTER_DAYS,
+        "due_for_recheck": sum(1 for row in rows if row["due_for_recheck"]),
     }
 
 

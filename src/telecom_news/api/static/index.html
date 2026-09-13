@@ -210,6 +210,10 @@
           <label class="inline">Sites to probe
             <input type="number" id="discover-sites" min="1" max="60" value="12" />
           </label>
+          <label class="check">
+            <input type="checkbox" id="discover-recheck" />
+            re-check sites already tried
+          </label>
           <button type="button" class="btn primary" id="btn-discover-scan">Scan now</button>
           <button type="button" class="btn" id="btn-refresh-candidates">Refresh</button>
         </div>
@@ -252,6 +256,12 @@
       </div>
       <p class="muted small" id="candidates-meta"></p>
       <div id="candidates-list"></div>
+
+      <h2 class="sub">Sites already probed</h2>
+      <p class="muted small" id="history-meta"></p>
+      <div class="table-wrap"><table id="table-history"><thead>
+        <tr><th>when</th><th>site</th><th>result</th><th>on topic</th><th>what was found</th><th>next scan</th></tr>
+      </thead><tbody></tbody></table></div>
     </section>
 
     <section class="panel tab-panel" id="panel-ai-rules" hidden>

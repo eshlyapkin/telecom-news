@@ -707,7 +707,11 @@ def test_api_passes_look_for_to_the_scan(client, monkeypatch: pytest.MonkeyPatch
     for _ in range(40):
         if client.get("/api/run/status").json()["status"] != "running":
             break
-    assert captured["options"] == {"use_search": False, "look_for": "sitemap"}
+    assert captured["options"] == {
+        "use_search": False,
+        "look_for": "sitemap",
+        "recheck": False,
+    }
 
 
 def test_api_rejects_an_unknown_look_for(client) -> None:
@@ -719,3 +723,126 @@ def test_gui_offers_the_look_for_choice(client) -> None:
     html = client.get("/").text
     assert 'id="discover-look-for"' in html
     assert "sitemaps only" in html
+
+
+# --- where the scan has been ------------------------------------------------
+
+
+def test_a_scan_records_what_it_found_at_each_site(tmp_path: Path) -> None:
+    db = _seeded_db(
+        tmp_path,
+        {
+            1: ["https://good.example/1", "https://noise.example/1", "https://dead.example/1"],
+            2: ["https://good.example/2", "https://noise.example/2", "https://dead.example/2"],
+        },
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "dead.example" in url:
+            return httpx.Response(500, text="down")
+        if url.endswith("/feed/") and "good.example" in url:
+            return httpx.Response(200, content=MESSAGING_FEED.encode("utf-8"))
+        if url.endswith("/feed/") and "noise.example" in url:
+            return httpx.Response(200, content=OFF_TOPIC_FEED.encode("utf-8"))
+        if url.rstrip("/").endswith("example"):
+            return httpx.Response(200, text="<html><head></head><body>site</body></html>")
+        return httpx.Response(404)
+
+    discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    rows = {row["host"]: row for row in discovery.list_checked(tmp_path)["checked"]}
+    assert rows["good.example"]["outcome"] == "proposed"
+    assert rows["good.example"]["url"] == "https://good.example/feed/"
+    assert rows["noise.example"]["outcome"] == "off_topic"
+    assert rows["noise.example"]["hit_rate"] == 0.0  # the score that got it rejected
+    assert rows["dead.example"]["outcome"] == "unreachable"
+    assert all(row["due_for_recheck"] is False for row in rows.values())
+
+
+def test_a_second_scan_skips_sites_already_probed(tmp_path: Path) -> None:
+    """Otherwise a repeat scan spends its whole budget on the same hosts."""
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"], 2: ["https://noise.example/2"]})
+    client = _scan_client()
+
+    first = discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=client)
+    assert first["checked_sites"] == 1 and first["skipped_sites"] == 0
+
+    second = discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=client)
+    assert second["checked_sites"] == 0
+    assert second["skipped_sites"] == 1
+
+
+def test_recheck_probes_everything_again(tmp_path: Path) -> None:
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"], 2: ["https://noise.example/2"]})
+    client = _scan_client()
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=client)
+
+    again = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, recheck=True, client=client
+    )
+    assert again["checked_sites"] == 1 and again["skipped_sites"] == 0
+
+
+def test_a_site_becomes_due_again_after_the_cooldown(tmp_path: Path) -> None:
+    """A site that had nothing in September must get another chance later."""
+    from datetime import datetime, timedelta, timezone
+
+    db = _seeded_db(tmp_path, {1: ["https://noise.example/1"], 2: ["https://noise.example/2"]})
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client())
+
+    state = discovery.load_state(tmp_path)
+    stale = datetime.now(timezone.utc) - timedelta(days=discovery.RECHECK_AFTER_DAYS + 1)
+    state["checked"]["noise.example"]["last_checked_at"] = stale.isoformat(timespec="seconds")
+    discovery.save_state(state, tmp_path)
+
+    listing = discovery.list_checked(tmp_path)
+    assert listing["due_for_recheck"] == 1
+    assert listing["checked"][0]["due_for_recheck"] is True
+
+    after = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_scan_client()
+    )
+    assert after["checked_sites"] == 1  # probed again rather than skipped forever
+
+
+def test_api_exposes_the_probe_history(client, tmp_path: Path) -> None:
+    body = client.get("/api/discovery-history").json()
+    assert body["recheck_after_days"] == discovery.RECHECK_AFTER_DAYS
+    assert {row["host"] for row in body["checked"]} == {"good.example"}
+    assert client.get("/api/discovery-history?limit=0").status_code == 400
+
+
+def test_gui_shows_the_probe_history(client) -> None:
+    html = client.get("/").text
+    assert "Sites already probed" in html
+    assert 'id="discover-recheck"' in html
+    assert "refreshHistory" in client.get("/static/app.js").text
+
+
+def test_a_repeat_scan_reaches_further_down_the_ranking(tmp_path: Path) -> None:
+    """Skipping is only useful if skipped hosts are replaced by unseen ones."""
+    links = {
+        index: [f"https://site{index}.example/a", f"https://site{index}.example/b"]
+        for index in range(6)
+    }
+    # every article links every site, so all six qualify as seeds
+    db = _seeded_db(tmp_path, {index: sum(links.values(), []) for index in range(2)})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    first = discovery.scan(db=db, data_dir=tmp_path, max_sites=2, use_search=False, client=client)
+    second = discovery.scan(db=db, data_dir=tmp_path, max_sites=2, use_search=False, client=client)
+
+    assert first["checked_sites"] == 2
+    assert second["checked_sites"] == 2  # two *different* sites, not zero
+    assert second["skipped_sites"] == 2
+    assert discovery.list_checked(tmp_path)["count"] == 4

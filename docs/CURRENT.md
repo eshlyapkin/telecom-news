@@ -3,6 +3,36 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M11c): discovery remembers where it has been
+
+Three operator questions, one answer: the scan kept no record of the sites it
+probed. There was no history to look at, a repeat scan re-probed the same hosts
+instead of reaching new ones, and nothing said when a rejected site would be
+looked at again.
+
+Each probe is now recorded per host in `data/source_candidates.json`: when, what
+came of it (`proposed`, `off_topic` with the score that lost, `nothing_found`,
+`unreachable`) and what was found. The Discovery tab shows it as **Sites already
+probed**; `discover --history` prints the same.
+
+A host probed in the last **30 days** is skipped, so a repeat scan spends its
+budget on hosts nobody has checked — and after 30 days it comes back around, so
+an outlet that starts publishing a feed is not lost forever. The row says which
+of the two applies. "Re-check sites already tried" (and `--recheck`) ignores the
+cooldown.
+
+**Fixed while verifying:** the seed pool was drawn at exactly the probe budget,
+so once the top hosts were skipped there was nothing left to replace them and a
+second scan probed zero sites. The pool is now drawn five times wider than the
+budget. Live: the first scan probed 6 sites, the second probed **6 different**
+ones and skipped the first 6.
+
+The history is also where a rejection becomes legible — omnisend.com now reads
+"found a feed, but its headlines are off topic · 10%", instead of the site
+silently never appearing.
+
+`pytest -q` → **423 passed**.
+
 ## Session 2026-09-13 (M11b): discovery searches what the AI rules say
 
 Discovery *scored* candidates with the AI rules from the start, but *what it

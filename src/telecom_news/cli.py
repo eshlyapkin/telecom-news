@@ -181,6 +181,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="use_search",
         help="Do not query the news search; follow only the links of collected articles",
     )
+    discover_parser.add_argument(
+        "--recheck",
+        action="store_true",
+        help="Probe sites again even if they were checked recently",
+    )
+    discover_parser.add_argument(
+        "--history", action="store_true", help="Show which sites have been probed, and when"
+    )
     discover_parser.add_argument("--accept", help="Add this candidate id/url as a source")
     discover_parser.add_argument("--dismiss", help="Reject a candidate id/url for good")
 
@@ -1442,6 +1450,8 @@ def _cmd_discover(
     dismiss: str | None = None,
     use_search: bool = True,
     look_for: str = "both",
+    recheck: bool = False,
+    history: bool = False,
 ) -> int:
     """Propose new feeds, or manage the proposals already stored.
 
@@ -1476,7 +1486,7 @@ def _cmd_discover(
         print(f"Dismissed {dismiss}; later scans will not propose it again.")
         return 0
 
-    if not show:
+    if not show and not history:
         if max_sites < 1:
             print(f"error: --max-sites must be >= 1 (got {max_sites}).", file=sys.stderr)
             return 2
@@ -1502,7 +1512,26 @@ def _cmd_discover(
             min_hit_rate=min_hit_rate,
             use_search=use_search,
             look_for=look_for,
+            recheck=recheck,
         )
+
+    if history:
+        seen = source_discovery.list_checked(config.data_dir)
+        if not seen["checked"]:
+            print("No site has been probed yet.")
+            return 0
+        print(
+            f"{seen['count']} site(s) probed; {seen['due_for_recheck']} due for a re-check "
+            f"(a site is skipped for {seen['recheck_after_days']} day(s)):"
+        )
+        for row in seen["checked"]:
+            rate = f"{float(row['hit_rate']):.0%}" if row["hit_rate"] is not None else "   -"
+            flag = "recheck" if row["due_for_recheck"] else "       "
+            print(
+                f"  {str(row['last_checked_at'])[:16]}  {rate:>5}  {flag}  "
+                f"{row['host'][:34]:34}  {row['outcome_label']}"
+            )
+        return 0
 
     listing = source_discovery.list_candidates(config.data_dir)
     if not listing["candidates"]:
@@ -1877,6 +1906,8 @@ def main(argv: list[str] | None = None) -> int:
             dismiss=args.dismiss,
             use_search=args.use_search,
             look_for=args.look_for,
+            recheck=args.recheck,
+            history=args.history,
         )
     if args.command == "prune":
         return _cmd_prune(args.max_age_days, args.dry_run)

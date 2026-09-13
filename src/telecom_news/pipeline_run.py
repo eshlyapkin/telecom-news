@@ -240,6 +240,7 @@ def _default_runner(
             max_sites=limit or 12,
             use_search=bool(settings.get("use_search", True)),
             look_for=str(settings.get("look_for", "both")),
+            recheck=bool(settings.get("recheck", False)),
         )
     raise ValueError(f"unknown stage {stage!r}")
 

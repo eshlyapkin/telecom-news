@@ -56,6 +56,7 @@ function showTab(name) {
   if (name === "discovery") {
     refreshCandidates();
     refreshQueries();
+    refreshHistory();
   }
   if (name === "ai-rules") refreshRules();
 }
@@ -575,6 +576,48 @@ async function saveQueries(queries) {
     : "Back to the topics generated from your AI rules.";
 }
 
+/* Where the scans have been. A site is skipped until its cooldown expires, so
+   this table is also the answer to "will the next scan look somewhere new?". */
+async function refreshHistory() {
+  try {
+    const data = await fetchJson("/api/discovery-history?limit=200");
+    el("history-meta").textContent = data.count
+      ? `${data.count} site(s) probed · ${data.due_for_recheck} due for a re-check ` +
+        `(a site is skipped for ${data.recheck_after_days} days after a probe)`
+      : "No site has been probed yet.";
+    const tbody = el("table-history").querySelector("tbody");
+    if (!data.count) {
+      tbody.innerHTML = `<tr><td colspan="6" class="muted">Empty</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = (data.checked || [])
+      .map((row) => {
+        const rate =
+          row.hit_rate === null || row.hit_rate === undefined
+            ? "—"
+            : `${Math.round(row.hit_rate * 100)}%` +
+              (row.items ? ` (${escapeHtml(row.hits)}/${escapeHtml(row.items)})` : "");
+        const found = row.url
+          ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noopener">${escapeHtml(row.kind || "")}</a>`
+          : "—";
+        const next = row.due_for_recheck
+          ? '<span class="badge warn">will re-check</span>'
+          : '<span class="badge on">skipped</span>';
+        return `<tr>
+          <td>${escapeHtml(String(row.last_checked_at || "").slice(0, 16))}</td>
+          <td>${escapeHtml(row.host)}</td>
+          <td>${escapeHtml(row.outcome_label)}</td>
+          <td>${rate}</td>
+          <td>${found}</td>
+          <td>${next}</td>
+        </tr>`;
+      })
+      .join("");
+  } catch (err) {
+    el("history-meta").textContent = err.message;
+  }
+}
+
 async function refreshCandidates() {
   try {
     const data = await fetchJson("/api/source-candidates");
@@ -652,6 +695,7 @@ async function startDiscoveryScan() {
       max_sites: Number(el("discover-sites").value) || 12,
       use_search: el("discover-use-search").checked,
       look_for: el("discover-look-for").value || "both",
+      recheck: el("discover-recheck").checked,
     }),
   });
   banner.hidden = false;
@@ -667,6 +711,7 @@ async function startDiscoveryScan() {
         banner.textContent =
           status.status === "ok" ? "Scan finished." : `Scan failed: ${status.error || ""}`;
         refreshCandidates();
+        refreshHistory();
       }
     } catch {
       /* ignore transient */
@@ -778,7 +823,10 @@ el("btn-reset-langs").onclick = () => resetLanguages().catch((e) => alert(e.mess
 el("btn-refresh-published").onclick = () => refreshPublished();
 el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();
-el("btn-refresh-candidates").onclick = () => refreshCandidates();
+el("btn-refresh-candidates").onclick = () => {
+  refreshCandidates();
+  refreshHistory();
+};
 el("btn-discover-scan").onclick = () => startDiscoveryScan().catch((e) => alert(e.message));
 el("btn-save-queries").onclick = () =>
   saveQueries(textToLines(el("discover-queries").value)).catch((e) => alert(e.message));
