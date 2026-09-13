@@ -167,9 +167,15 @@
         (saved as <code>data/ai_rules.json</code>).
       </p>
       <div class="card static">
-        <label class="block">System prompt (LLM classifier)
+        <label class="block">System prompt (LLM classifier) — editorial policy only
           <textarea id="rules-prompt" rows="8" spellcheck="false"></textarea>
         </label>
+        <p class="muted small">
+          Describe <strong>what counts as relevant</strong>. Do not write an output format
+          here: the JSON response contract is appended automatically on every call, so a
+          policy that forgets it can no longer break classification.
+          <span id="rules-effective"></span>
+        </p>
         <label class="block">Messaging terms (one per line — keyword gate must match at least one)
           <textarea id="rules-messaging" rows="8" spellcheck="false"></textarea>
         </label>

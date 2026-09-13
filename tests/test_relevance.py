@@ -120,6 +120,7 @@ def test_prompt_contains_title_and_plain_text() -> None:
 def test_all_roadmap_categories_are_known() -> None:
     assert set(CATEGORIES) == {
         "technology",
+        "network_protocol",
         "vendor",
         "aggregator",
         "carrier",
@@ -240,3 +241,65 @@ def test_gate_bypass_sends_articles_without_keywords_to_the_model() -> None:
     bypassed = check_relevance(llm, article, use_gate=False)
     assert bypassed.relevant is True and bypassed.category == "carrier"
     assert len(llm.calls) == 1
+
+
+# --- response contract (2026-09-13) ----------------------------------------
+#
+# The AI rules editor replaces the whole system prompt. An operator policy that
+# only describes *what* is relevant left the model answering in prose, so every
+# article that reached it failed to parse and was parked as 'error' after three
+# attempts — the channel went quiet while collect and the keyword gate still
+# looked healthy. The response contract is therefore appended to whatever policy
+# is in force and cannot be edited away.
+
+
+def test_response_contract_is_appended_to_an_operator_policy(tmp_path, monkeypatch) -> None:
+    from telecom_news.ai_rules import invalidate_cache, save_rules
+    from telecom_news.processors.relevance import _active_system_prompt
+
+    monkeypatch.setenv("TELECOM_NEWS_DATA_DIR", str(tmp_path))
+    save_rules({"system_prompt": "Only SMS routing stories are relevant."}, data_dir=tmp_path)
+    invalidate_cache()
+
+    prompt = _active_system_prompt()
+    assert "Only SMS routing stories are relevant." in prompt  # policy kept verbatim
+    assert '"relevant": true|false' in prompt  # contract added
+    assert "security_antifraud" in prompt  # valid categories enumerated
+
+    invalidate_cache()
+
+
+def test_default_policy_states_the_contract_exactly_once() -> None:
+    from telecom_news.processors.relevance import (
+        RELEVANCE_SYSTEM_PROMPT,
+        compose_system_prompt,
+    )
+
+    assert RELEVANCE_SYSTEM_PROMPT.count('"relevant": true|false') == 1
+    assert compose_system_prompt("policy").count('"relevant": true|false') == 1
+
+
+def test_classification_survives_a_policy_without_a_format_section(tmp_path, monkeypatch) -> None:
+    """The reproduction of the live failure, with the fix in place."""
+    from telecom_news.ai_rules import invalidate_cache, save_rules
+
+    monkeypatch.setenv("TELECOM_NEWS_DATA_DIR", str(tmp_path))
+    save_rules(
+        {"system_prompt": "You judge whether an article is about the SMS industry."},
+        data_dir=tmp_path,
+    )
+    invalidate_cache()
+
+    fake = _FakeLLM(['{"relevant": true, "category": "network_protocol", "reason": "SMPP"}'])
+    result = check_relevance(fake, _article())
+    assert result.relevant is True
+    assert result.category == "network_protocol"
+    (system, _user) = fake.calls[0]
+    assert "no markdown" in system["content"]
+
+    invalidate_cache()
+
+
+def test_network_protocol_is_an_accepted_category() -> None:
+    fake = _FakeLLM(['{"relevant": true, "category": "network_protocol", "reason": "SS7"}'])
+    assert check_relevance(fake, _article()).category == "network_protocol"

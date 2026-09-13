@@ -20,7 +20,10 @@ from . import __version__
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from .config import Config
     from .llm.client import LLMClient
+    from .models import Article
+    from .storage.database import Database
 
 
 def _not_implemented(command: str, milestone: str) -> int:
@@ -267,6 +270,50 @@ def _process_summary(processed: int, skipped: int, errors: int, unfinished: bool
     return f"Done: {processed} processed, {skipped} skipped, {errors} error(s){suffix}."
 
 
+def _missing_channel_languages(db: Database, article: Article, config: Config) -> list[str]:
+    """Channel languages ``publish`` cannot render for this article yet.
+
+    Mirrors the lookup in :func:`_cmd_publish`: a stored rendition wins, and a
+    pre-M8 row whose ``llm_result.summary`` is already in that language needs no
+    rendition either.
+    """
+    llm_result = article.llm_result or {}
+    legacy = llm_result.get("summary")
+    legacy_lang = llm_result.get("summary_language") or config.target_lang
+    missing = []
+    for lang in config.target_langs:
+        if db.get_rendition(article.id, lang) is not None:
+            continue
+        if legacy and legacy_lang == lang:
+            continue
+        missing.append(lang)
+    return missing
+
+
+def _articles_needing_renditions(db: Database, config: Config) -> list[tuple[Article, list[str]]]:
+    """Publishable articles that lack a rendition in some channel language.
+
+    Adding a language to ``TELECOM_NEWS_TARGET_LANGS`` leaves every article that
+    was processed earlier without a rendition in it, and ``publish`` cannot make
+    one (content and delivery stay separated). Those articles would then fail the
+    stage on every cycle until they age out of the publish window. Only rows that
+    ``publish`` would actually pick up are considered, so the work is bounded by
+    the freshness window rather than by the size of the archive.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    window = config.publish_max_age_hours
+    since = datetime.now(timezone.utc) - timedelta(hours=window) if window > 0 else None
+    pending: list[tuple[Article, list[str]]] = []
+    for article in db.recent_articles(statuses=("processed", "published"), since=since):
+        if article.id is None:
+            continue
+        missing = _missing_channel_languages(db, article, config)
+        if missing:
+            pending.append((article, missing))
+    return pending
+
+
 def _cmd_collect(
     source_id: str,
     limit: int | None,
@@ -415,7 +462,11 @@ def _cmd_sources(
     ]
     if enabled_only:
         rows = [row for row in rows if row["enabled"]]
-    enabled_count = sum(1 for row in rows if row["enabled"])
+    # Count the pipeline registry itself, not the catalog rows on screen: the
+    # hand-written sources of `config.SOURCES` and feeds added from the GUI (M9d)
+    # have no catalog entry, so counting `rows` reported fewer enabled sources
+    # than collect actually polls (42 of 63 instead of 54).
+    enabled_count = sum(1 for source in SOURCES.values() if source.enabled)
     issues = catalog_issues(entries)
     counts = catalog_counts(entries)
 
@@ -741,9 +792,12 @@ def _cmd_process(
         model=config.lmstudio_model,
     )
     articles = db.get_unprocessed(status="new", limit=limit)
-    if not articles:
+    backlog = _articles_needing_renditions(db, config)
+    if not articles and not backlog:
         print("Nothing to process (no articles with status 'new').")
         return 0
+    if not articles:
+        print("No articles with status 'new'; rendering missing channel languages.")
     try:
         model_name = llm.ensure_model()
     except LLMUnavailableError as exc:
@@ -826,6 +880,32 @@ def _cmd_process(
             f"[{article.id}] processed ({relevance.category}, {langs}): "
             f"{article.title or '(no title)'}"
         )
+
+    # Articles processed before a channel language was added (see
+    # `_articles_needing_renditions`). Capped by PUBLISH_MAX_PER_CYCLE so one
+    # cycle never renders more than it could publish; the rest follow next run.
+    cap = int(config.publish_max_per_cycle)
+    rendered = 0
+    for article, missing in _articles_needing_renditions(db, config):
+        if cap and rendered >= cap:
+            break
+        for lang in missing:
+            try:
+                ensure_rendition(db, llm, article, lang, model_name=model_name)
+            except LLMUnavailableError as exc:
+                return _abort(exc)
+            except LLMResponseError as exc:
+                errors += 1
+                print(
+                    f"warning: article id={article.id}: bad summary reply for '{lang}' ({exc}).",
+                    file=sys.stderr,
+                )
+                continue
+            rendered += 1
+            print(f"[{article.id}] rendered missing '{lang}' for the channel")
+    if rendered:
+        print(f"Backfilled {rendered} missing channel rendition(s).")
+
     print(_process_summary(processed, skipped, errors))
     return 0
 

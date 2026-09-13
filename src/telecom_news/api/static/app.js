@@ -423,6 +423,10 @@ async function refreshRules() {
     el("rules-meta").textContent = data.overridden
       ? `Override file: ${data.path}`
       : `Using built-in defaults (no file yet). Will write ${data.path} on Save.`;
+    const effective = data.effective_system_prompt || "";
+    el("rules-effective").textContent = effective
+      ? `The classifier receives ${effective.length} characters (policy + contract).`
+      : "";
     el("rules-status").textContent = "";
   } catch (err) {
     el("rules-status").textContent = err.message;

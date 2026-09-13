@@ -20,6 +20,7 @@ from .processors.relevance import (
     DEFAULT_MESSAGING_TERMS,
     DEFAULT_OFF_TOPIC_TERMS,
     DEFAULT_RELEVANCE_SYSTEM_PROMPT,
+    compose_system_prompt,
 )
 
 _LOCK = threading.RLock()
@@ -178,4 +179,7 @@ def rules_for_api(data_dir: Path | None = None) -> dict[str, Any]:
         "overridden": path.is_file(),
         # M9d: the editor widens the built-in term lists, it cannot shrink them.
         "defaults_always_merged": True,
+        # What the classifier actually receives: the policy above plus the
+        # response contract, which is appended and cannot be edited away.
+        "effective_system_prompt": compose_system_prompt(current.system_prompt),
     }

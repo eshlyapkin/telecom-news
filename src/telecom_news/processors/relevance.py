@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 CATEGORIES = (
     "technology",
+    # Technical SMS architecture: SMPP, SMSC, SS7/MAP, SIGTRAN, SIP/IMS, routing
+    # and interworking. Split out of "technology" because it is the core subject
+    # of the domain, and an operator policy that names it was having every such
+    # verdict discarded as an unknown category.
+    "network_protocol",
     "vendor",
     "aggregator",
     "carrier",
@@ -125,12 +130,14 @@ def _active_off_topic_terms() -> tuple[str, ...]:
 
 
 def _active_system_prompt() -> str:
+    """Operator policy with the response contract appended (never editable away)."""
     try:
         from ..ai_rules import load_rules
 
-        return load_rules().system_prompt
+        policy = load_rules().system_prompt
     except Exception:  # noqa: BLE001
-        return DEFAULT_RELEVANCE_SYSTEM_PROMPT
+        policy = DEFAULT_RELEVANCE_SYSTEM_PROMPT
+    return compose_system_prompt(policy)
 
 
 def _force_llm_gate() -> bool:
@@ -176,6 +183,8 @@ def is_obviously_off_topic(article: Article) -> bool:
     )
 
 
+# Editorial policy: what counts as relevant. This is the part operators rewrite
+# in the AI rules editor (M9c).
 DEFAULT_RELEVANCE_SYSTEM_PROMPT = (
     "You are a news relevance classifier for an SMS-industry monitoring system. "
     "Decide whether the article is about the SMS/messaging ecosystem: A2P/P2A/P2P "
@@ -183,16 +192,33 @@ DEFAULT_RELEVANCE_SYSTEM_PROMPT = (
     "context, SMS hubs, messaging routing/delivery/security/anti-fraud, RCS and "
     "business messaging, messaging partnerships and deals, SMS regulation. "
     "General telecom news WITHOUT a direct SMS/messaging link (5G, fiber, satellites, "
-    "data centers, AI in general) is IRRELEVANT. "
-    "Reply with a single JSON object only, no other text: "
-    '{"relevant": true|false, "category": "<one of: technology, vendor, aggregator, '
-    "carrier, product_service, partnership, ma_investment, security_antifraud, "
-    'regulation> or null", "reason": "<one short sentence>"}. '
-    "If relevant is false, category must be null."
+    "data centers, AI in general) is IRRELEVANT."
 )
 
-# Back-compat alias.
-RELEVANCE_SYSTEM_PROMPT = DEFAULT_RELEVANCE_SYSTEM_PROMPT
+# Machine interface: how the verdict must come back. It is NOT editorial policy —
+# :func:`check_relevance` parses this shape and marks the article 'error' when it
+# is missing. An operator prompt that only describes *what* is relevant (a very
+# natural thing to write) left the model answering in prose, every article that
+# reached the model failed to parse, and the channel went silent while collect
+# and the keyword gate still looked healthy. So this block is appended to
+# whatever prompt is in force instead of being part of the editable text.
+RESPONSE_FORMAT_INSTRUCTION = (
+    "Reply with a single JSON object only, no other text, no markdown, no "
+    "explanation before or after it: "
+    '{"relevant": true|false, "category": "<one of: ' + ", ".join(CATEGORIES) + '> or null", '
+    '"reason": "<one short sentence>"}. '
+    "If relevant is false, category must be null. Use only the category values "
+    "listed above; if none fits, use null."
+)
+
+
+def compose_system_prompt(policy: str) -> str:
+    """Editorial policy + the mandatory response contract."""
+    return f"{policy.strip()}\n\n{RESPONSE_FORMAT_INSTRUCTION}"
+
+
+# Back-compat alias: the complete prompt as it is actually sent by default.
+RELEVANCE_SYSTEM_PROMPT = compose_system_prompt(DEFAULT_RELEVANCE_SYSTEM_PROMPT)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")

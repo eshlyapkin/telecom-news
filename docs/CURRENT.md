@@ -3,6 +3,48 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (ops): scheduler env, AI-rules contract, rendition backfill
+
+Four production defects found and fixed after M9d went live. See D-023.
+
+- **The scheduled pipeline had no credentials.** `scripts/run_pipeline.sh` never
+  read `~/.config/telecom-news/env` (only the systemd serve unit did) and the
+  scheduler starts it from a non-login shell, so every run ended its publish
+  stage with `TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required` — 71 such
+  lines in `data/logs/pipeline.log`. The script now sources the file;
+  `TELECOM_NEWS_ENV_FILE` points it elsewhere.
+- **The AI rules editor could break classification.** The editor replaces the
+  whole system prompt, and the operator's policy described only *what* is
+  relevant. With the JSON response contract gone the model answered in prose,
+  `check_relevance` could not parse it, and every article that reached the model
+  was parked as `error` after three attempts (8 rows, all after the rules were
+  saved on 2026-09-12 19:50; nothing published since). The contract is now
+  appended to whatever policy is in force and cannot be edited away
+  (`relevance.compose_system_prompt`); `/api/ai-rules` returns
+  `effective_system_prompt` so the GUI can show what the model receives.
+- **`network_protocol` is now a real category.** The operator's policy defines
+  it (SMPP/SMSC/SS7/SIGTRAN — the core of the domain) but `CATEGORIES` did not,
+  so every such verdict was discarded with a warning and the post went out
+  without a category.
+- **Adding a channel language stranded older articles.** `publish` cannot render
+  (content and delivery stay separated), so articles processed before `en` was
+  added failed the stage on every cycle. `process` now backfills missing channel
+  renditions for articles inside the publish window, capped by
+  `PUBLISH_MAX_PER_CYCLE`.
+- `sources` counted enabled *catalog rows* while claiming to report the pipeline
+  registry (42 of 63 instead of 54).
+
+**Verified on production:** `recover --max-attempts 0` + `process` → 9 articles
+classified, **0 errors** (was 8 parked), 3 missing `en` renditions backfilled;
+`publish --dry-run` previews the three EN posts. Live LM Studio check before the
+fix returned prose (`**IRRELEVANT** …`, unparsable) and after it returns
+`{"relevant": false, …}` with the operator's reasoning intact.
+`pytest -q` → **331 passed**; ruff / `git diff --check` clean.
+
+**Open, not changed:** an EN post keeps the original Russian headline —
+`renditions` store `title=article.title` and `summarize()` never translates a
+title. Fixing that is a content change (extra LLM call per rendition).
+
 ## Session 2026-09-13 (M9d): sources add/delete + shared RU+EN channel
 
 Version **0.5.0**.
