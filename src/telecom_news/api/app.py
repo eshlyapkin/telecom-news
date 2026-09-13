@@ -1,4 +1,4 @@
-"""FastAPI application: multi-project API + M9b/M9c control panel GUI."""
+"""FastAPI application: multi-project API + M9b/M9c/M9d control panel GUI."""
 
 from __future__ import annotations
 
@@ -10,11 +10,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .. import __version__
 from ..ai_rules import load_rules, reset_rules, rules_for_api, save_rules
-from ..config import load_config
+from ..config import load_config, refresh_sources
+from ..custom_sources import add_source, delete_source
 from ..pipeline_run import get_run_status, start_run
 from ..projects import DEFAULT_PROJECT_ID, ProjectRegistry, get_registry
-from ..source_overrides import apply_to_sources, list_sources_for_api, set_source_enabled
+from ..source_overrides import list_sources_for_api, set_source_enabled
 from .ops import ops_status, project_queue
 
 
@@ -54,6 +56,16 @@ class SourceEnableBody(BaseModel):
     enabled: bool
 
 
+class SourceCreateBody(BaseModel):
+    """M9d: add one RSS feed from the GUI (id derived from the url when omitted)."""
+
+    url: str = Field(min_length=1, max_length=500)
+    id: str | None = Field(default=None, max_length=63)
+    language: str = "en"
+    relevance_gate: str = "strict"
+    enabled: bool = True
+
+
 class RunNowBody(BaseModel):
     stage: str = "full"  # full | collect | process | publish | deliver
     dry_run: bool = False
@@ -73,16 +85,17 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
     """Build the API app. ``registry`` is injectable for tests."""
     config = load_config()
     reg = registry or get_registry(config.data_dir)
-    # Honour GUI/file source disables for this process (and any shared SOURCES).
-    apply_to_sources(config.data_dir)
+    # Replay the file overlays (M9b disables + M9d add/delete) onto the declared
+    # registry, so this process sees exactly what the GUI last saved.
+    refresh_sources(config.data_dir)
 
     app = FastAPI(
         title="telecom-news",
         description=(
-            "Multi-project news operations API (M9c control panel). "
+            "Multi-project news operations API (M9d control panel). "
             "No authentication — localhost only."
         ),
-        version="0.4.0",
+        version=__version__,
     )
     app.state.registry = reg
     app.state.data_dir = config.data_dir
@@ -96,8 +109,14 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         return {
             "status": "ok",
             "service": "telecom-news",
-            "version": "0.4.0",
+            "version": __version__,
             "global_publish_paused": reg.global_publish_paused(),
+            "target_langs": list(config.target_langs),
+            # (lang, chat_id) actually used by publish. With one TELEGRAM_CHAT_ID
+            # and two target languages both entries carry the same chat id (M9d).
+            "channel_targets": [
+                {"lang": lang, "chat_id": chat_id} for lang, chat_id in config.channel_chat_ids
+            ],
         }
 
     @app.get("/api/dashboard")
@@ -225,12 +244,28 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
 
     @app.get("/api/sources")
     def sources() -> dict[str, Any]:
-        rows = list_sources_for_api()
+        rows = list_sources_for_api(config.data_dir)
         return {
             "sources": rows,
             "count": len(rows),
             "enabled": sum(1 for row in rows if row["enabled"]),
+            "custom": sum(1 for row in rows if row.get("custom")),
         }
+
+    @app.post("/api/sources", status_code=201)
+    def create_source(body: SourceCreateBody) -> dict[str, Any]:
+        """Add an RSS feed to the live registry and ``data/custom_sources.json``."""
+        try:
+            return add_source(
+                body.url,
+                source_id=body.id,
+                language=body.language,
+                relevance_gate=body.relevance_gate,
+                enabled=body.enabled,
+                data_dir=config.data_dir,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.patch("/api/sources/{source_id}")
     def patch_source(source_id: str, body: SourceEnableBody) -> dict[str, Any]:
@@ -238,6 +273,16 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
             return set_source_enabled(source_id, body.enabled, data_dir=config.data_dir)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/api/sources/{source_id}")
+    def remove_source(source_id: str) -> dict[str, Any]:
+        """Delete a custom feed, or soft-delete a built-in one (M9d)."""
+        try:
+            return delete_source(source_id, data_dir=config.data_dir)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/ai-rules")
     def get_ai_rules() -> dict[str, Any]:

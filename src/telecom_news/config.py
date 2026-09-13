@@ -88,9 +88,13 @@ class Config:
         object.__setattr__(self, "target_langs", langs)
         channel_ids: list[tuple[str, str]] = []
         default_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-        for index, lang in enumerate(langs):
+        for lang in langs:
+            # M9d: every target language falls back to the shared TELEGRAM_CHAT_ID.
+            # `TELECOM_NEWS_TARGET_LANGS=ru,en` with one chat id therefore posts
+            # both renditions into that channel; a dedicated channel per language
+            # is opted into with TELEGRAM_CHAT_ID_<LANG>.
             specific = os.environ.get(f"TELEGRAM_CHAT_ID_{lang.upper()}", "")
-            chat_id = specific or (default_chat_id if index == 0 else "")
+            chat_id = specific or default_chat_id
             if chat_id:
                 channel_ids.append((lang, chat_id))
         object.__setattr__(self, "channel_chat_ids", tuple(channel_ids))
@@ -392,24 +396,50 @@ def _apply_disabled_override() -> None:
 
 
 _merge_catalog_sources()
+# Snapshot of the registry exactly as declared in code + catalog. Every runtime
+# overlay (env disables, GUI toggles, M9d add/delete) is replayed on top of this
+# copy, so a delete can be undone without reimporting the module.
+_BASELINE_SOURCES: dict[str, SourceConfig] = dict(SOURCES)
 _apply_disabled_override()
 
 
-def _apply_file_disabled_override() -> None:
-    """Apply ``data/disabled_sources.json`` from the M9b GUI (best-effort).
+def reset_sources_to_baseline() -> dict[str, SourceConfig]:
+    """Restore ``SOURCES`` to the declared registry + env disables (M9d)."""
+    SOURCES.clear()
+    SOURCES.update(_BASELINE_SOURCES)
+    _apply_disabled_override()
+    return SOURCES
 
-    Import-time only: if the data dir is not ready yet, skip silently. The API
-    process also calls :func:`source_overrides.apply_to_sources` on startup.
+
+def refresh_sources(data_dir: Path | None = None) -> dict[str, SourceConfig]:
+    """Rebuild ``SOURCES`` from the baseline and replay all file overlays.
+
+    Order matters: soft-deletes are applied before custom feeds (so re-adding a
+    deleted id works), enable/disable toggles last (so they can address a feed
+    that was only just added).
+    """
+    from .custom_sources import apply_custom_sources
+    from .source_overrides import apply_to_sources
+
+    reset_sources_to_baseline()
+    apply_custom_sources(data_dir)
+    apply_to_sources(data_dir)
+    return SOURCES
+
+
+def _apply_file_overrides() -> None:
+    """Apply the ``data/*.json`` source overlays at import time (best-effort).
+
+    If the data dir is not ready yet, skip silently. The API process calls
+    :func:`refresh_sources` on startup and after every mutation.
     """
     try:
-        from .source_overrides import apply_to_sources
-
-        apply_to_sources()
+        refresh_sources()
     except OSError:
         pass
 
 
-_apply_file_disabled_override()
+_apply_file_overrides()
 
 
 def get_source(source_id: str) -> SourceConfig | None:

@@ -26,6 +26,26 @@ _LOCK = threading.RLock()
 _CACHE: dict[str, AiRules] = {}
 
 
+def merge_terms(defaults: tuple[str, ...] | list[str], extras: list[str]) -> list[str]:
+    """Built-in terms + operator additions, order preserved, case-insensitive dedup.
+
+    M9d: saving the editor must never *shrink* the keyword gate. The GUI shows
+    the effective list, so a round-trip of Save used to persist whatever the
+    textarea happened to hold — and an operator list without "чат-бот" /
+    "мессендж" silently stopped every Russian messaging article from reaching
+    the LLM (the D-011 regression). Defaults are therefore always kept and the
+    editor can only widen the list.
+    """
+    merged = list(defaults)
+    seen = {term.casefold() for term in merged}
+    for term in extras:
+        key = term.casefold()
+        if key not in seen:
+            seen.add(key)
+            merged.append(term)
+    return merged
+
+
 @dataclass
 class AiRules:
     """Operator-editable relevance policy."""
@@ -52,21 +72,20 @@ class AiRules:
         prompt = data.get("system_prompt")
         if isinstance(prompt, str) and prompt.strip():
             base.system_prompt = prompt.strip()
-        for key, attr in (
-            ("messaging_terms", "messaging_terms"),
-            ("off_topic_terms", "off_topic_terms"),
+        for key, attr, defaults in (
+            ("messaging_terms", "messaging_terms", DEFAULT_MESSAGING_TERMS),
+            ("off_topic_terms", "off_topic_terms", DEFAULT_OFF_TOPIC_TERMS),
         ):
             raw = data.get(key)
+            cleaned: list[str] = []
             if isinstance(raw, list):
                 cleaned = [str(item).strip() for item in raw if str(item).strip()]
-                if cleaned:
-                    setattr(base, attr, cleaned)
             elif isinstance(raw, str) and raw.strip():
                 cleaned = [
                     line.strip() for line in raw.replace(",", "\n").splitlines() if line.strip()
                 ]
-                if cleaned:
-                    setattr(base, attr, cleaned)
+            if cleaned:
+                setattr(base, attr, merge_terms(defaults, cleaned))
         if "force_llm_gate" in data:
             base.force_llm_gate = bool(data["force_llm_gate"])
         if isinstance(data.get("notes"), str):
@@ -157,4 +176,6 @@ def rules_for_api(data_dir: Path | None = None) -> dict[str, Any]:
         "defaults": defaults.to_dict(),
         "path": str(path),
         "overridden": path.is_file(),
+        # M9d: the editor widens the built-in term lists, it cannot shrink them.
+        "defaults_always_merged": True,
     }

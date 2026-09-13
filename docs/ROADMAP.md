@@ -271,10 +271,21 @@
 - Minimal static GUI: global KPIs + project cards + switcher
 - Project/global publish kill switch honored by `publish`
 
-**M9b+ (later, not this change set):** wizard, templates, clone, full queue UI,
-RBAC, shared sources, per-project article rows — see vision doc §3.
+**M9b (сделано):** control panel — project/global publish pause, очередь,
+переключатели источников (`data/disabled_sources.json`).
 
-**Явно НЕ входит в M9a:** authentication, multi-destination publish, cost UI,
+**M9c (сделано):** Run now (фоновый цикл в процессе API) и редактор AI rules
+(`data/ai_rules.json`).
+
+**M9d (сделано):** Sources Add / Delete в GUI поверх baseline-реестра
+(`data/custom_sources.json`, `data/removed_sources.json`), общий канал для всех
+языков из `TELECOM_NEWS_TARGET_LANGS`, объединение терминов AI rules со
+встроенными — см. D-022.
+
+**M10+ (later, not this change set):** wizard, templates, clone, per-channel AI
+filters, RBAC, shared sources, per-project article rows — see vision doc §3.
+
+**Явно НЕ входит в M9:** authentication, multi-destination publish, cost UI,
 rewriting `articles` schema with `project_id`.
 
 **Зависимости:** M8 + D-020 stable on operator machine; optional `.[api]`.

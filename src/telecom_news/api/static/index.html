@@ -12,7 +12,7 @@
       <span class="logo">TN</span>
       <div>
         <strong>telecom-news</strong>
-        <div class="muted">M9c control panel · localhost only</div>
+        <div class="muted">M9d control panel · localhost only</div>
       </div>
     </div>
     <div class="switcher">
@@ -114,13 +114,42 @@
           <button type="button" class="btn" id="btn-refresh-sources">Refresh</button>
         </div>
       </div>
+      <div class="card static">
+        <h2>Add RSS</h2>
+        <div class="run-form">
+          <label>Feed URL
+            <input type="url" id="src-url" placeholder="https://example.com/feed/" />
+          </label>
+          <label>Id (optional — derived from the URL)
+            <input type="text" id="src-id" placeholder="example-com" />
+          </label>
+          <label>Language
+            <select id="src-lang">
+              <option value="en">en</option>
+              <option value="ru">ru</option>
+            </select>
+          </label>
+          <label>Relevance gate
+            <select id="src-gate">
+              <option value="strict">strict (keyword guard before the LLM)</option>
+              <option value="llm">llm (narrow feed — always ask the model)</option>
+            </select>
+          </label>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-add-source">Add source</button>
+          </div>
+        </div>
+        <p class="muted small" id="src-add-status"></p>
+      </div>
       <p class="muted small">
-        Toggle writes <code>data/disabled_sources.json</code> and updates the live registry
-        for <strong>this</strong> API process. Restart <code>run_pipeline</code> / bot to pick
-        up disables in other processes, or set <code>TELECOM_NEWS_DISABLED_SOURCES</code> in env.
+        Toggle writes <code>data/disabled_sources.json</code>; Add / Delete write
+        <code>data/custom_sources.json</code> and <code>data/removed_sources.json</code>.
+        Built-in feeds are declared in code, so deleting one is a soft-delete overlay —
+        adding the same id back restores it. Changes apply to <strong>this</strong> API
+        process; restart <code>run_pipeline</code> / bot to pick them up elsewhere.
       </p>
       <div class="table-wrap"><table id="table-sources"><thead>
-        <tr><th>on</th><th>id</th><th>lang</th><th>gate</th><th>url</th></tr>
+        <tr><th>on</th><th>id</th><th>lang</th><th>gate</th><th>url</th><th>del</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
 
@@ -147,6 +176,11 @@
         <label class="block">Off-topic terms (one per line — rejected without LLM when gate is on)
           <textarea id="rules-offtopic" rows="6" spellcheck="false"></textarea>
         </label>
+        <p class="muted small">
+          Built-in terms are always kept: Save can only <strong>widen</strong> both lists.
+          Deleting a line here does not disable it — that guard protects the Russian
+          messaging keywords the RU sources depend on.
+        </p>
         <label class="check">
           <input type="checkbox" id="rules-force-llm" />
           Force LLM for all sources (bypass keyword gate — costlier, D-012 style)
@@ -160,7 +194,7 @@
   </main>
 
   <footer class="foot">
-    No auth · bind 127.0.0.1 only · M9c: pause / queue / sources / run-now / AI rules.
+    No auth · bind 127.0.0.1 only · M9d: pause / queue / sources add-delete / run-now / AI rules.
   </footer>
   <script src="/static/app.js"></script>
 </body>

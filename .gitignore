@@ -63,9 +63,14 @@ data/*.lock
 data/projects/
 data/disabled_sources.json
 data/ai_rules.json
+data/custom_sources.json
+data/removed_sources.json
 data/last_run.json
 data/logs/run-now.log
 *.patch
+apply_m9d.py
 apply_m9c.py
 apply_m9b.py
 m9c-files.zip*
+m9d-files.zip*
+*.Identifier

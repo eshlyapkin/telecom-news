@@ -178,10 +178,27 @@ def test_channel_targets_follow_target_languages(monkeypatch) -> None:
     monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,en")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
     monkeypatch.delenv("TELEGRAM_CHAT_ID_EN", raising=False)
-    assert load_config().channel_chat_ids == (("ru", "-100"),)
+    # M9d: one chat id serves every target language, so a single channel gets the
+    # RU and the EN rendition. Before, only the first language was mapped and EN
+    # was silently dropped unless the operator also set TELEGRAM_CHAT_ID_EN.
+    assert load_config().channel_chat_ids == (("ru", "-100"), ("en", "-100"))
 
     monkeypatch.setenv("TELEGRAM_CHAT_ID_EN", "-200")
     assert load_config().channel_chat_ids == (("ru", "-100"), ("en", "-200"))
+
+
+def test_single_target_language_maps_one_channel(monkeypatch) -> None:
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_EN", "-200")
+    assert load_config().channel_chat_ids == (("ru", "-100"),)
+
+
+def test_channel_targets_empty_without_a_chat_id(monkeypatch) -> None:
+    monkeypatch.setenv("TELECOM_NEWS_TARGET_LANGS", "ru,en")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_EN", raising=False)
+    assert load_config().channel_chat_ids == ()
 
 
 def test_narrow_sources_allow_the_llm_gate(monkeypatch) -> None:

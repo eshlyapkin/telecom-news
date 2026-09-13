@@ -143,6 +143,9 @@ a { color: #9ec1ff; }
 }
 .toggle.on::after { left: calc(100% - 1.1rem); }
 
+/* M9d: per-row delete in the sources table. */
+.small-btn { padding: 0.15rem 0.45rem; font-size: 0.8rem; line-height: 1.1; }
+
 .foot {
   padding: 0.75rem 1.25rem; border-top: 1px solid var(--border);
   color: var(--muted); font-size: 0.8rem;

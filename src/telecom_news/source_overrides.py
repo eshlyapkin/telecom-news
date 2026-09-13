@@ -102,11 +102,18 @@ def set_source_enabled(
     }
 
 
-def list_sources_for_api() -> list[dict[str, Any]]:
-    """Snapshot of the pipeline registry for the GUI."""
-    from .config import SOURCES
+def list_sources_for_api(data_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Snapshot of the pipeline registry for the GUI.
 
-    file_disabled = load_disabled()
+    ``custom`` marks feeds added through the GUI (M9d): deleting one only drops
+    its ``data/custom_sources.json`` entry, while deleting a built-in records a
+    soft-delete overlay instead.
+    """
+    from .config import SOURCES
+    from .custom_sources import list_custom_ids
+
+    file_disabled = load_disabled(data_dir)
+    custom_ids = list_custom_ids(data_dir)
     rows: list[dict[str, Any]] = []
     for source_id in sorted(SOURCES):
         source = SOURCES[source_id]
@@ -118,6 +125,7 @@ def list_sources_for_api() -> list[dict[str, Any]]:
                 "language": source.language,
                 "relevance_gate": source.relevance_gate,
                 "disabled_by_file": source_id in file_disabled,
+                "custom": source_id in custom_ids,
             }
         )
     return rows

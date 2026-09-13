@@ -1,4 +1,4 @@
-/* M9c control panel: overview pause, run-now, queue, sources, AI rules. */
+/* M9d control panel: overview pause, run-now, queue, sources add/delete, AI rules. */
 
 let currentProjectId = "";
 let statusCache = null;
@@ -321,12 +321,14 @@ function renderSources() {
   tbody.innerHTML = rows
     .map((s) => {
       const on = s.enabled;
-      return `<tr data-id="${escapeHtml(s.id)}">
+      const custom = s.custom ? ' <span class="badge running">custom</span>' : "";
+      return `<tr data-id="${escapeHtml(s.id)}" data-custom="${!!s.custom}">
         <td><button type="button" class="toggle ${on ? "on" : ""}" title="toggle" data-enabled="${on}"></button></td>
-        <td>${escapeHtml(s.id)}</td>
+        <td>${escapeHtml(s.id)}${custom}</td>
         <td>${escapeHtml(s.language)}</td>
         <td>${escapeHtml(s.relevance_gate)}</td>
         <td class="title"><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.url)}</a></td>
+        <td><button type="button" class="btn danger small-btn source-delete" title="delete source">✕</button></td>
       </tr>`;
     })
     .join("");
@@ -350,6 +352,52 @@ function renderSources() {
       }
     });
   });
+  tbody.querySelectorAll(".source-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tr = btn.closest("tr");
+      const id = tr.dataset.id;
+      const builtIn = tr.dataset.custom !== "true";
+      const note = builtIn
+        ? "It is a built-in feed: the delete is stored as an overlay and adding the id back restores it."
+        : "It was added here, so the entry is removed for good.";
+      if (!confirm(`Delete source "${id}"?\n\n${note}`)) return;
+      btn.disabled = true;
+      try {
+        await fetchJson(`/api/sources/${encodeURIComponent(id)}`, { method: "DELETE" });
+        await refreshSources();
+        await refreshAll();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+async function addSource() {
+  const url = (el("src-url").value || "").trim();
+  const status = el("src-add-status");
+  if (!url) {
+    status.textContent = "Feed URL is required.";
+    return;
+  }
+  const body = {
+    url,
+    language: el("src-lang").value || "en",
+    relevance_gate: el("src-gate").value || "strict",
+  };
+  const id = (el("src-id").value || "").trim();
+  if (id) body.id = id;
+  const created = await fetchJson("/api/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  el("src-url").value = "";
+  el("src-id").value = "";
+  status.textContent = `Added "${created.id}". Run collect to pull its first items.`;
+  await refreshSources();
+  await refreshAll();
 }
 
 function termsToText(list) {
@@ -461,6 +509,10 @@ el("btn-run-now").onclick = () => {
 };
 el("btn-run-submit").onclick = () => startRunNow().catch((e) => alert(e.message));
 el("source-filter").oninput = () => renderSources();
+el("btn-add-source").onclick = () =>
+  addSource().catch((e) => {
+    el("src-add-status").textContent = e.message;
+  });
 
 refreshAll();
 setInterval(() => {

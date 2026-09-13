@@ -3,6 +3,44 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M9d): sources add/delete + shared RU+EN channel
+
+Version **0.5.0**.
+
+- **Sources Add / Delete** in the GUI. `POST /api/sources` (url, optional id,
+  language, relevance_gate), `DELETE /api/sources/{id}`; `PATCH` unchanged.
+  Custom feeds land in `data/custom_sources.json`; deleting a built-in writes a
+  soft-delete overlay to `data/removed_sources.json` (the declaration in
+  `config.SOURCES` / the catalog is never edited, so re-adding the id restores
+  it). New module `src/telecom_news/custom_sources.py`.
+- `config.reset_sources_to_baseline()` + `config.refresh_sources()` rebuild the
+  registry from a baseline snapshot and replay the overlays in a fixed order:
+  env disables → soft-deletes → custom feeds → GUI toggles. `create_app` calls
+  `refresh_sources` on startup and every mutation goes through it.
+- **Shared RU+EN channel.** Every target language now falls back to the common
+  `TELEGRAM_CHAT_ID`, so `TELECOM_NEWS_TARGET_LANGS=ru,en` with a single chat id
+  posts both renditions into that one channel. Before, only the first language
+  was mapped and EN was silently dropped unless `TELEGRAM_CHAT_ID_EN` was set —
+  which stays the way to opt into a separate EN channel.
+- **AI rules no longer shrink the keyword gate.** Saved term lists are merged
+  with the built-in defaults (`ai_rules.merge_terms`); the editor can only widen
+  them. A hand-curated `data/ai_rules.json` without "чат-бот" / "мессендж" had
+  disabled the Cyrillic half of the D-011 guard and made `tests/test_relevance.py`
+  fail against the live data dir.
+- `/api/health` reports the package version plus `target_langs` and the
+  effective `channel_targets`; source rows carry a `custom` flag.
+
+**Verified:** `pytest -q` → **319 passed** (was 296 passed + 2 failed against the
+operator's real `data/ai_rules.json`); `ruff check` / `ruff format --check` /
+`git diff --check` clean. Live read-only check against the production data dir:
+health `0.5.0`, 63 sources / 54 enabled, `channel_targets` = ru+en on one chat id.
+
+**Operator:** add `TELECOM_NEWS_TARGET_LANGS=ru,en` to
+`~/.config/telecom-news/env` (no `export`), `pip install -e '.[api]'`, then
+`systemctl --user daemon-reload && systemctl --user restart telecom-news-serve`.
+Old `processed` rows without an EN rendition need a re-`process` before an EN
+post appears.
+
 ## Session 2026-09-12 (M9c): run-now + AI rules UI
 
 - **Run now** on Overview: `POST /api/projects/{id}/run` starts
