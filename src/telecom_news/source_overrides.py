@@ -122,6 +122,7 @@ def list_sources_for_api(data_dir: Path | None = None) -> list[dict[str, Any]]:
                 "id": source.id,
                 "enabled": source.enabled,
                 "url": source.url,
+                "type": source.type,
                 "language": source.language,
                 "relevance_gate": source.relevance_gate,
                 "disabled_by_file": source_id in file_disabled,

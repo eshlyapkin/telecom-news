@@ -154,6 +154,11 @@ def load_config() -> Config:
 
 
 SOURCE_TYPE_RSS = "rss"
+# Outlets that publish no feed (or hide it behind a WAF) still ship a sitemap for
+# search engines; the news-sitemap format carries headline and date, which is all
+# collect needs. See `collectors.sitemap`.
+SOURCE_TYPE_SITEMAP = "sitemap"
+SOURCE_TYPES: tuple[str, ...] = (SOURCE_TYPE_RSS, SOURCE_TYPE_SITEMAP)
 
 
 @dataclass(frozen=True)

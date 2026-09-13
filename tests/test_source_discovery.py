@@ -478,3 +478,93 @@ def test_gui_exposes_the_search_topics(client) -> None:
     assert "Search topics" in html
     assert 'id="discover-queries"' in html
     assert "refreshQueries" in client.get("/static/app.js").text
+
+
+# --- outlets with no feed ---------------------------------------------------
+
+SITEMAP_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+  <url><loc>https://nofeed.example/1</loc><news:news>
+    <news:publication_date>2026-09-12T09:00:00Z</news:publication_date>
+    <news:title>A2P SMS volumes climb</news:title></news:news></url>
+  <url><loc>https://nofeed.example/2</loc><news:news>
+    <news:publication_date>2026-09-12T08:00:00Z</news:publication_date>
+    <news:title>Business messaging deal signed</news:title></news:news></url>
+  <url><loc>https://nofeed.example/3</loc><news:news>
+    <news:publication_date>2026-09-12T07:00:00Z</news:publication_date>
+    <news:title>Smishing ring dismantled</news:title></news:news></url>
+</urlset>"""
+
+
+def _nofeed_client(seen: list[str] | None = None) -> httpx.Client:
+    """A site with no feed anywhere, but a proper news sitemap."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if seen is not None:
+            seen.append(url)
+        if url == "https://nofeed.example/":
+            return httpx.Response(200, text="<html><head></head><body>site</body></html>")
+        if url.endswith("/robots.txt"):
+            return httpx.Response(200, text="Sitemap: https://nofeed.example/news-sitemap.xml\n")
+        if url.endswith("/news-sitemap.xml"):
+            return httpx.Response(200, text=SITEMAP_XML)
+        return httpx.Response(404, text="no feed here")
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_evaluate_sitemap_scores_dated_headlines() -> None:
+    verdict = discovery.evaluate_sitemap("https://nofeed.example/", client=_nofeed_client())
+    assert verdict is not None
+    assert verdict["feed_url"] == "https://nofeed.example/news-sitemap.xml"
+    assert verdict["items"] == 3 and verdict["hits"] == 3
+
+
+def test_scan_proposes_a_sitemap_when_there_is_no_feed(tmp_path: Path) -> None:
+    db = _seeded_db(tmp_path, {1: ["https://nofeed.example/1"], 2: ["https://nofeed.example/2"]})
+    result = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_nofeed_client()
+    )
+    assert result["new_candidates"] == 1
+    (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
+    assert candidate["type"] == "sitemap"
+    assert candidate["feed_url"] == "https://nofeed.example/news-sitemap.xml"
+    assert "no feed published" in candidate["origin"]
+
+
+def test_accepting_a_sitemap_candidate_creates_a_sitemap_source(tmp_path: Path) -> None:
+    db = _seeded_db(tmp_path, {1: ["https://nofeed.example/1"], 2: ["https://nofeed.example/2"]})
+    discovery.scan(db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_nofeed_client())
+    (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
+
+    result = discovery.accept_candidate(candidate["id"], data_dir=tmp_path)
+    assert result["source"]["type"] == "sitemap"
+    assert config_mod.SOURCES[result["source"]["id"]].type == "sitemap"
+
+
+def test_a_site_without_dated_headlines_is_not_proposed(tmp_path: Path) -> None:
+    """An undated archive listing says nothing about what the outlet publishes now."""
+    undated = """<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://nofeed.example/a</loc></url>
+      <url><loc>https://nofeed.example/b</loc></url>
+      <url><loc>https://nofeed.example/c</loc></url></urlset>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://nofeed.example/":
+            return httpx.Response(200, text="<html><head></head><body>x</body></html>")
+        if url.endswith(("/sitemap.xml", "/news-sitemap.xml", "/sitemap-news.xml")):
+            return httpx.Response(200, text=undated)
+        return httpx.Response(404)
+
+    db = _seeded_db(tmp_path, {1: ["https://nofeed.example/1"], 2: ["https://nofeed.example/2"]})
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert result["new_candidates"] == 0

@@ -94,6 +94,7 @@ _ASSET_SUFFIXES: tuple[str, ...] = (".svg", ".png", ".jpg", ".jpeg", ".gif", ".c
 # them on feeds.feedburner.com — so a feeds page may legitimately point off-site.
 _FEED_HOSTS: tuple[str, ...] = ("feedburner.com", "feedpress.me", "feedblitz.com")
 MAX_LINKS_FROM_FEED_PAGE = 6
+MAX_SITEMAPS_PROBED_PER_SITE = 2
 
 _CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 _HREF_RE = re.compile(r'href=["\'](https?://[^"\'<>\s]+)["\']', re.IGNORECASE)
@@ -174,6 +175,9 @@ class Candidate:
     site_url: str = ""
     title: str = ""
     language: str = "en"
+    # "rss" or "sitemap" — an outlet without a feed can still be proposed if it
+    # publishes a dated news sitemap.
+    type: str = "rss"
     origin: str = ""
     items: int = 0
     hits: int = 0
@@ -526,6 +530,55 @@ def evaluate_feed(feed_bytes: bytes, *, feed_url: str) -> dict[str, Any] | None:
     }
 
 
+def _score_titles(titles: list[str]) -> dict[str, Any] | None:
+    """Share of headlines that pass the operator's gate, or None when too few."""
+    from .models import Article
+    from .processors.relevance import has_messaging_signal, is_obviously_off_topic
+
+    titles = [title for title in titles if title.strip()]
+    if len(titles) < MIN_ITEMS:
+        return None
+    hits = [
+        title
+        for title in titles
+        if has_messaging_signal(headline := Article(url="", source_id="candidate", title=title))
+        and not is_obviously_off_topic(headline)
+    ]
+    text = " ".join(titles[:20])
+    return {
+        "items": len(titles),
+        "hits": len(hits),
+        "hit_rate": round(len(hits) / len(titles), 3),
+        "sample_titles": hits[:MAX_SAMPLE_TITLES],
+        "language": "ru" if _CYRILLIC_RE.search(text) else "en",
+    }
+
+
+def evaluate_sitemap(site_url: str, *, client: Any | None = None) -> dict[str, Any] | None:
+    """Score a site's news sitemap, for outlets that publish no feed.
+
+    Only dated entries that carry their own headline count: a plain archive
+    listing says nothing about what the outlet writes now, and fetching hundreds
+    of pages to find out is not something a scan should do.
+    """
+    from .collectors.sitemap import discover_sitemaps, parse_sitemap
+
+    for sitemap_url in discover_sitemaps(site_url, client=client, timeout=PROBE_TIMEOUT)[
+        :MAX_SITEMAPS_PROBED_PER_SITE
+    ]:
+        try:
+            body = fetch_url(sitemap_url, timeout=PROBE_TIMEOUT, max_retries=1, client=client)
+            document = parse_sitemap(body)
+        except CollectorError:
+            continue
+        titles = [entry.title for entry in document.entries if entry.title and entry.published_at]
+        verdict = _score_titles(titles)
+        if verdict is not None:
+            verdict["feed_url"] = sitemap_url
+            return verdict
+    return None
+
+
 def scan(
     *,
     db: Any,
@@ -579,6 +632,7 @@ def scan(
         checked += 1
         print(f"discovery: probing {host}")
         failed_probes = 0
+        proposed = False
         for feed_url in feed_urls_for_site(site_url, client=client):
             if failed_probes >= MAX_FAILED_PROBES_PER_SITE:
                 break
@@ -611,7 +665,41 @@ def scan(
                 f"discovery: candidate {candidate.id} — {candidate.hits}/{candidate.items} "
                 f"items on topic ({candidate.hit_rate:.0%})"
             )
+            proposed = True
             break  # one feed per host is enough to propose
+
+        if not proposed:
+            # No usable feed — including the case where every guess was refused,
+            # which is exactly when an outlet is worth checking for a sitemap.
+            # collect can read a dated news sitemap as a source of its own (D-026).
+            verdict = evaluate_sitemap(site_url, client=client)
+            sitemap_url = str(verdict["feed_url"]) if verdict else ""
+            if (
+                verdict
+                and verdict["hit_rate"] >= min_hit_rate
+                and sitemap_url not in dismissed
+                and sitemap_url not in existing
+            ):
+                candidate = Candidate(
+                    id=candidate_id(sitemap_url),
+                    feed_url=sitemap_url,
+                    site_url=site_url,
+                    title=host,
+                    language=str(verdict["language"]),
+                    type="sitemap",
+                    origin=origins.get(host, f"sitemap of {host} (no feed published)"),
+                    items=int(verdict["items"]),
+                    hits=int(verdict["hits"]),
+                    hit_rate=float(verdict["hit_rate"]),
+                    sample_titles=list(verdict["sample_titles"]),
+                    discovered_at=_now(),
+                )
+                added.append(candidate)
+                existing.add(sitemap_url)
+                print(
+                    f"discovery: candidate {candidate.id} (sitemap) — "
+                    f"{candidate.hits}/{candidate.items} on topic ({candidate.hit_rate:.0%})"
+                )
 
     with _LOCK:
         state = load_state(data_dir)
@@ -680,6 +768,7 @@ def accept_candidate(
             source_id=str(candidate.get("id") or "") or None,
             language=str(candidate.get("language") or "en"),
             relevance_gate=relevance_gate,
+            source_type=str(candidate.get("type") or "rss"),
             data_dir=data_dir,
         )
         save_state(state, data_dir)

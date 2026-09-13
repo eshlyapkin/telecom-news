@@ -458,7 +458,7 @@ function renderSources() {
       const custom = s.custom ? ' <span class="badge running">custom</span>' : "";
       return `<tr data-id="${escapeHtml(s.id)}" data-custom="${!!s.custom}">
         <td><button type="button" class="toggle ${on ? "on" : ""}" title="toggle" data-enabled="${on}"></button></td>
-        <td>${escapeHtml(s.id)}${custom}</td>
+        <td>${escapeHtml(s.id)}${custom}${s.type === "sitemap" ? ' <span class="badge warn">sitemap</span>' : ""}</td>
         <td>${escapeHtml(s.language)}</td>
         <td>${escapeHtml(s.relevance_gate)}</td>
         <td class="title"><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.url)}</a></td>
@@ -517,6 +517,7 @@ async function addSource() {
   }
   const body = {
     url,
+    type: el("src-type").value || "rss",
     language: el("src-lang").value || "en",
     relevance_gate: el("src-gate").value || "strict",
   };

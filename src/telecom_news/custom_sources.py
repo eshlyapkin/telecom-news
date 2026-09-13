@@ -72,9 +72,13 @@ def _clean_row(raw: Any) -> dict[str, Any] | None:
         return None
     language = str(raw.get("language", "en")).strip().lower() or "en"
     gate = str(raw.get("relevance_gate", "strict")).strip().lower()
+    from .config import SOURCE_TYPE_RSS, SOURCE_TYPES
+
+    source_type = str(raw.get("type", SOURCE_TYPE_RSS)).strip().lower()
     return {
         "id": source_id,
         "url": url,
+        "type": source_type if source_type in SOURCE_TYPES else SOURCE_TYPE_RSS,
         "language": language,
         "relevance_gate": gate if gate in VALID_GATES else "strict",
         "enabled": bool(raw.get("enabled", True)),
@@ -168,7 +172,7 @@ def apply_custom_sources(data_dir: Path | None = None) -> dict[str, list[str]]:
         for row in custom:
             SOURCES[row["id"]] = SourceConfig(
                 id=row["id"],
-                type=SOURCE_TYPE_RSS,
+                type=row.get("type", SOURCE_TYPE_RSS),
                 url=row["url"],
                 language=row["language"],
                 enabled=row["enabled"],
@@ -183,16 +187,27 @@ def add_source(
     source_id: str | None = None,
     language: str = "en",
     relevance_gate: str = "strict",
+    source_type: str = "rss",
     enabled: bool = True,
     data_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Add one RSS feed to the registry and persist it. Raises ValueError on bad input."""
-    from .config import SOURCES, SUPPORTED_LANGS, refresh_sources
+    """Add one source to the registry and persist it. Raises ValueError on bad input.
+
+    ``source_type`` is ``"rss"`` for a feed or ``"sitemap"`` for an outlet that
+    publishes none (see :mod:`telecom_news.collectors.sitemap`).
+    """
+    from .config import SOURCE_TYPES, SOURCES, SUPPORTED_LANGS, refresh_sources
 
     url = (url or "").strip()
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError(f"url must be an http(s) feed address, got {url!r}")
+        raise ValueError(f"url must be an http(s) address, got {url!r}")
+
+    source_type = (source_type or "rss").strip().lower()
+    if source_type not in SOURCE_TYPES:
+        raise ValueError(
+            f"source type must be one of {', '.join(SOURCE_TYPES)}, got {source_type!r}"
+        )
 
     language = (language or "en").strip().lower()
     if language not in SUPPORTED_LANGS:
@@ -233,6 +248,7 @@ def add_source(
             {
                 "id": new_id,
                 "url": url,
+                "type": source_type,
                 "language": language,
                 "relevance_gate": relevance_gate,
                 "enabled": bool(enabled),
@@ -246,6 +262,7 @@ def add_source(
         "id": source.id,
         "enabled": source.enabled,
         "url": source.url,
+        "type": source.type,
         "language": source.language,
         "relevance_gate": source.relevance_gate,
         "custom": True,

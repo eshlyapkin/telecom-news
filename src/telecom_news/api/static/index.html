@@ -145,9 +145,15 @@
         </div>
       </div>
       <div class="card static">
-        <h2>Add RSS</h2>
+        <h2>Add source</h2>
         <div class="run-form">
-          <label>Feed URL
+          <label>Kind
+            <select id="src-type">
+              <option value="rss">RSS / Atom feed</option>
+              <option value="sitemap">Sitemap (for outlets with no feed)</option>
+            </select>
+          </label>
+          <label>URL
             <input type="url" id="src-url" placeholder="https://example.com/feed/" />
           </label>
           <label>Id (optional — derived from the URL)
@@ -170,6 +176,13 @@
           </div>
         </div>
         <p class="muted small" id="src-add-status"></p>
+        <p class="muted small">
+          A <strong>sitemap</strong> source reads the list a site publishes for search
+          engines — useful when an outlet has no feed. Point it at the site's
+          <code>news-sitemap.xml</code> (or its root, and the usual paths are tried).
+          Entries without a publication date are ignored: a plain archive listing cannot
+          be told apart from fresh news.
+        </p>
       </div>
       <p class="muted small">
         Toggle writes <code>data/disabled_sources.json</code>; Add / Delete write

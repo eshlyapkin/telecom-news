@@ -3,6 +3,39 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M11): sitemap sources + a hermetic test suite
+
+Version **0.7.0**. See D-026.
+
+**Reading outlets that publish no feed.** `sitemap` is now a source type next to
+`rss`. Publishers without a feed still ship a sitemap for search engines, and
+the news-sitemap format carries exactly what collect needs: article URL,
+headline and publication date. `collectors/sitemap.py` discovers the sitemap
+through `robots.txt` then the conventional paths, follows a `<sitemapindex>`
+(news children first), reads gzip, and refuses a document that declares a DTD —
+ElementTree expands internal entities, and a sitemap never needs one.
+
+**An entry without a date is skipped, and a sitemap with no dates at all is an
+error.** A plain sitemap is the site's whole archive in no particular order, so
+without dates there is no way to tell this week's article from one from 2019 —
+telecompaper.com lists 19982 undated URLs, and publishing those as news would be
+wrong. Where an entry is dated but has no headline, the page is fetched once and
+its own `<title>`/`og:title` and description are used.
+
+Discovery proposes a sitemap when a site has no usable feed, the Sources tab can
+add one by hand, and accepting such a candidate creates a `sitemap` source.
+
+**The test suite no longer reads the operator's live data.** `tests/conftest.py`
+gives every test its own data directory and clears the project's environment
+variables. The suite had been failing on whatever the panel last wrote — a
+hand-edited `ai_rules.json` failed the relevance tests, and a language chosen in
+the panel failed seven configuration tests — and `git push` needed
+`env -u TELECOM_NEWS_DISABLED_SOURCES`. It now passes both in a clean shell and
+in one that has sourced the env file.
+
+**Verified live:** a `sitemap` source pointed at cnews collected four articles
+with real headlines and dates. `pytest -q` → **404 passed**.
+
 ## Session 2026-09-13 (M10c): worldwide topical discovery
 
 Discovery no longer depends on what the current sources happen to link to. It

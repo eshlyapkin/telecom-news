@@ -7,4 +7,4 @@ published-posts view and source discovery (M10).
 See ``docs/ROADMAP.md`` and ``docs/VISION_MULTI_PROJECT.md``.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

@@ -65,10 +65,15 @@ class SourceEnableBody(BaseModel):
 
 
 class SourceCreateBody(BaseModel):
-    """M9d: add one RSS feed from the GUI (id derived from the url when omitted)."""
+    """Add one source from the GUI (id derived from the url when omitted).
+
+    ``type`` is ``rss`` for a feed, or ``sitemap`` for an outlet that publishes
+    none — the url is then its sitemap (or the site root, which is probed).
+    """
 
     url: str = Field(min_length=1, max_length=500)
     id: str | None = Field(default=None, max_length=63)
+    type: str = "rss"
     language: str = "en"
     relevance_gate: str = "strict"
     enabled: bool = True
@@ -302,6 +307,7 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
                 source_id=body.id,
                 language=body.language,
                 relevance_gate=body.relevance_gate,
+                source_type=body.type,
                 enabled=body.enabled,
                 data_dir=config.data_dir,
             )

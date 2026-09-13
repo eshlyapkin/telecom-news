@@ -184,7 +184,7 @@ def test_health_reports_version_and_channel_targets(client: TestClient) -> None:
 
 def test_gui_offers_add_and_delete(client: TestClient) -> None:
     html = client.get("/").text
-    assert "Add RSS" in html
+    assert "Add source" in html
     assert "btn-add-source" in html
     assert 'id="src-url"' in html
     js = client.get("/static/app.js").text
@@ -260,3 +260,36 @@ def test_saved_rules_never_shrink_the_built_in_terms(client: TestClient, tmp_pat
 
     reset_rules(tmp_path)
     invalidate_cache()
+
+
+def test_a_sitemap_source_can_be_added(client: TestClient, tmp_path: Path) -> None:
+    """Outlets with no feed are added as a sitemap source (D-026)."""
+    created = client.post(
+        "/api/sources",
+        json={
+            "url": "https://outlet.example/news-sitemap.xml",
+            "id": "outlet-example",
+            "type": "sitemap",
+            "language": "en",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["type"] == "sitemap"
+    assert config_mod.SOURCES["outlet-example"].type == "sitemap"
+
+    row = next(
+        item
+        for item in client.get("/api/sources").json()["sources"]
+        if item["id"] == "outlet-example"
+    )
+    assert row["type"] == "sitemap"
+    stored = json.loads((tmp_path / "custom_sources.json").read_text(encoding="utf-8"))
+    assert stored["sources"][0]["type"] == "sitemap"
+
+
+def test_an_unknown_source_type_is_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/api/sources", json={"url": "https://outlet.example/x", "type": "carrier-pigeon"}
+    )
+    assert response.status_code == 400
+    assert "source type" in response.json()["detail"]

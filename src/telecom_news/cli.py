@@ -350,8 +350,8 @@ def _cmd_collect(
     Exit codes: 0 = success; 2 = usage error (unknown/disabled source,
     unsupported type, bad --limit); 1 = fetch/parse failure.
     """
-    from .collectors import CollectorError, RssCollector
-    from .config import SOURCE_TYPE_RSS, SOURCES, get_source, load_config
+    from .collectors import CollectorError, RssCollector, SitemapCollector
+    from .config import SOURCE_TYPE_RSS, SOURCE_TYPE_SITEMAP, SOURCES, get_source, load_config
     from .processors import normalize_item
     from .processors.dedup import store_new
     from .processors.freshness import is_stale
@@ -368,16 +368,22 @@ def _cmd_collect(
     if not source.enabled:
         print(f"error: source '{source_id}' is disabled.", file=sys.stderr)
         return 2
-    if source.type != SOURCE_TYPE_RSS:
+    if source.type not in (SOURCE_TYPE_RSS, SOURCE_TYPE_SITEMAP):
         print(
             f"error: source '{source_id}' has unsupported type '{source.type}' "
-            "(only 'rss' is supported).",
+            f"(supported: {SOURCE_TYPE_RSS}, {SOURCE_TYPE_SITEMAP}).",
             file=sys.stderr,
         )
         return 2
     config = load_config()
     age_limit = config.article_max_age_days if max_age_days is None else max_age_days
-    collector = RssCollector(source_id=source.id, feed_url=source.url, language=source.language)
+    collector: RssCollector | SitemapCollector
+    if source.type == SOURCE_TYPE_SITEMAP:
+        collector = SitemapCollector(
+            source_id=source.id, sitemap_url=source.url, language=source.language
+        )
+    else:
+        collector = RssCollector(source_id=source.id, feed_url=source.url, language=source.language)
     db = Database(db_path or config.db_path)
     try:
         raw_items = collector.collect(limit=limit)
