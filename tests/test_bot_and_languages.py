@@ -376,3 +376,33 @@ def test_article_status_round_trip_for_subscribers(tmp_path: Path) -> None:
 
     db.set_subscriber_status("100", "blocked")
     assert db.subscribers_with_languages() == {}
+
+
+def test_rendition_stores_the_translated_headline(tmp_path: Path) -> None:
+    """The English post must not keep the article's original headline."""
+    db = _db(tmp_path)
+    article = _article(1)
+    db.upsert_by_hash(article)
+    llm = _FakeLLM(['{"title": "German police read WhatsApp chats", "summary": "English."}'])
+
+    rendition = ensure_rendition(db, llm, article, "en")  # type: ignore[arg-type]
+    assert rendition.title == "German police read WhatsApp chats"
+
+    stored = db.get_rendition(article.id or 0, "en")
+    assert stored is not None and stored["title"] == "German police read WhatsApp chats"
+
+    post = format_post(article, lang="en", summary=rendition.summary, title=rendition.title)
+    assert "German police read WhatsApp chats" in post
+    assert article.title not in post
+
+
+def test_rendition_falls_back_to_the_original_headline(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    article = _article(1)
+    db.upsert_by_hash(article)
+    llm = _FakeLLM(['{"summary": "English summary."}'])
+
+    rendition = ensure_rendition(db, llm, article, "en")  # type: ignore[arg-type]
+    assert rendition.title == article.title
+    post = format_post(article, lang="en", summary=rendition.summary, title=rendition.title)
+    assert article.title in post

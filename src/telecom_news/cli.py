@@ -150,6 +150,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip articles that already failed this many times (0 = retry everything)",
     )
 
+    discover_parser = subparsers.add_parser(
+        "discover",
+        help="Propose new RSS sources found through the links of collected articles",
+    )
+    discover_parser.add_argument(
+        "--max-sites", type=int, default=12, help="How many external sites to probe (default 12)"
+    )
+    discover_parser.add_argument(
+        "--min-hit-rate",
+        type=float,
+        default=0.25,
+        help="Minimum share of on-topic items for a proposal (0..1, default 0.25)",
+    )
+    discover_parser.add_argument(
+        "--list", action="store_true", dest="show", help="Show stored candidates without scanning"
+    )
+    discover_parser.add_argument("--accept", help="Add this candidate id/url as a source")
+    discover_parser.add_argument("--dismiss", help="Reject a candidate id/url for good")
+
     backup_parser = subparsers.add_parser("backup", help="Create a consistent SQLite backup (M7)")
     backup_parser.add_argument(
         "--output", type=Path, help="Backup path (default: data/backups/news-<UTC>.db)"
@@ -1019,8 +1038,10 @@ def _cmd_publish(
             cached = db.get_rendition(article.id, lang)
             legacy = (article.llm_result or {}).get("summary")
             legacy_lang = (article.llm_result or {}).get("summary_language")
+            headline = None
             if cached is not None:
                 summary = str(cached.get("summary") or "")
+                headline = str(cached.get("title") or "") or None
             elif legacy and (legacy_lang or config.target_lang) == lang:
                 # Row processed before the renditions table existed (pre-M8 DB).
                 summary = str(legacy)
@@ -1039,14 +1060,28 @@ def _cmd_publish(
                 continue
             if dry_run:
                 print(f"--- article id={article.id} lang={lang} -> {chat_id} ---")
-                print(format_post(article, lang=lang, summary=summary, show_flag=show_flag))
+                print(
+                    format_post(
+                        article,
+                        lang=lang,
+                        summary=summary,
+                        title=headline,
+                        show_flag=show_flag,
+                    )
+                )
                 completions.append(True)
                 continue
             try:
                 assert client is not None
                 result = client.send_message(
                     str(chat_id),
-                    format_post(article, lang=lang, summary=summary, show_flag=show_flag),
+                    format_post(
+                        article,
+                        lang=lang,
+                        summary=summary,
+                        title=headline,
+                        show_flag=show_flag,
+                    ),
                 )
                 message_id = (result.get("result") or {}).get("message_id")
                 db.record_delivery(
@@ -1210,6 +1245,7 @@ def _cmd_deliver(
                         plan.article,
                         lang=plan.lang,
                         summary=str(cached["summary"]),
+                        title=str(cached.get("title") or "") or None,
                         show_flag=len(subscribers[plan.chat_id]) > 1,
                     )
                 )
@@ -1223,6 +1259,7 @@ def _cmd_deliver(
                 plan.article,
                 lang=plan.lang,
                 summary=rendition.summary,
+                title=rendition.title or None,
                 show_flag=len(subscribers[plan.chat_id]) > 1,
             )
             result = client.send_message(plan.chat_id, text)
@@ -1368,6 +1405,79 @@ def _cmd_recover(limit: int | None = None, max_attempts: int = 3) -> int:
             f"{parked} article(s) stay in 'error': they reached the retry limit "
             f"({max_attempts or 3}). Inspect them and reset manually if needed."
         )
+    return 0
+
+
+def _cmd_discover(
+    max_sites: int = 12,
+    min_hit_rate: float = 0.25,
+    show: bool = False,
+    accept: str | None = None,
+    dismiss: str | None = None,
+) -> int:
+    """Propose new feeds, or manage the proposals already stored.
+
+    Discovery never touches the registry on its own: a scan only writes
+    ``data/source_candidates.json``, and ``--accept`` is what turns one proposal
+    into a source. Run it on a schedule to keep watching for outlets the current
+    sources do not cover.
+    """
+    from . import source_discovery
+    from .config import load_config
+    from .storage.database import Database
+
+    config = load_config()
+    if accept:
+        try:
+            result = source_discovery.accept_candidate(accept, data_dir=config.data_dir)
+        except KeyError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        except ValueError as exc:
+            print(f"error: cannot add source: {exc}", file=sys.stderr)
+            return 2
+        source = result["source"]
+        print(f"Added source '{source['id']}' -> {source['url']} ({source['language']}).")
+        return 0
+    if dismiss:
+        try:
+            source_discovery.dismiss_candidate(dismiss, data_dir=config.data_dir)
+        except KeyError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"Dismissed {dismiss}; later scans will not propose it again.")
+        return 0
+
+    if not show:
+        if max_sites < 1:
+            print(f"error: --max-sites must be >= 1 (got {max_sites}).", file=sys.stderr)
+            return 2
+        if not 0.0 <= min_hit_rate <= 1.0:
+            print(
+                f"error: --min-hit-rate must be between 0 and 1 (got {min_hit_rate}).",
+                file=sys.stderr,
+            )
+            return 2
+        source_discovery.scan(
+            db=Database(config.db_path),
+            data_dir=config.data_dir,
+            max_sites=max_sites,
+            min_hit_rate=min_hit_rate,
+        )
+
+    listing = source_discovery.list_candidates(config.data_dir)
+    if not listing["candidates"]:
+        print("No open candidates.")
+        return 0
+    print(f"{listing['count']} candidate(s) awaiting a decision ({listing['path']}):")
+    for item in listing["candidates"]:
+        print(
+            f"  {item['id']:28} {item['hit_rate']:>5.0%} on topic "
+            f"({item['hits']}/{item['items']})  {item['language']}  {item['feed_url']}"
+        )
+        for title in item.get("sample_titles", [])[:2]:
+            print(f"      · {title[:90]}")
+    print("Accept with: discover --accept <id>   |   reject with: discover --dismiss <id>")
     return 0
 
 
@@ -1719,6 +1829,14 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_diagnose(runs=args.runs, offline=args.offline, as_json=args.json)
     if args.command == "recover":
         return _cmd_recover(args.limit, args.max_attempts)
+    if args.command == "discover":
+        return _cmd_discover(
+            max_sites=args.max_sites,
+            min_hit_rate=args.min_hit_rate,
+            show=args.show,
+            accept=args.accept,
+            dismiss=args.dismiss,
+        )
     if args.command == "prune":
         return _cmd_prune(args.max_age_days, args.dry_run)
     if args.command == "backup":

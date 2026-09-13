@@ -51,6 +51,7 @@ def format_post(
     *,
     lang: str | None = None,
     summary: str | None = None,
+    title: str | None = None,
     show_flag: bool = False,
 ) -> str:
     """Format one article as an HTML Telegram message.
@@ -59,7 +60,9 @@ def format_post(
     country flag so a subscriber who reads two languages can tell the versions
     apart. ``summary`` overrides the text used for the body (a cached rendition);
     without it the summary from ``llm_result`` is used, which keeps the previous
-    single-language behaviour intact.
+    single-language behaviour intact. ``title`` does the same for the headline:
+    a rendition carries its own translated one, and falling back to
+    ``article.title`` would put a Russian headline on an English post.
     """
     if not article.llm_result and summary is None:
         raise TelegramError(f"article id={article.id} has no LLM result")
@@ -74,8 +77,9 @@ def format_post(
         raise TelegramError(f"article id={article.id} has no summary")
     category = article.category or (article.llm_result or {}).get("category") or "news"
     header = f"{labels['flag']} " if show_flag else ""
+    headline = title.strip() if isinstance(title, str) and title.strip() else article.title
     return (
-        f"{header}<b>{_escape(article.title)}</b>\n\n"
+        f"{header}<b>{_escape(headline)}</b>\n\n"
         f"{_escape(summary.strip())}\n\n"
         f"<b>{labels['category']}:</b> {_escape(str(category))}\n"
         f'<a href="{_escape(article.url)}">{labels["source"]}</a>'

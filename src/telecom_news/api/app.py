@@ -16,8 +16,9 @@ from ..config import load_config, refresh_sources
 from ..custom_sources import add_source, delete_source
 from ..pipeline_run import get_run_status, start_run
 from ..projects import DEFAULT_PROJECT_ID, ProjectRegistry, get_registry
+from ..source_discovery import accept_candidate, dismiss_candidate, list_candidates
 from ..source_overrides import list_sources_for_api, set_source_enabled
-from .ops import ops_status, project_queue
+from .ops import ops_status, project_published, project_queue
 
 
 class ProjectCreate(BaseModel):
@@ -64,6 +65,16 @@ class SourceCreateBody(BaseModel):
     language: str = "en"
     relevance_gate: str = "strict"
     enabled: bool = True
+
+
+class CandidateAcceptBody(BaseModel):
+    """Accepting a proposal creates a normal custom source (M9d)."""
+
+    relevance_gate: str = "strict"
+
+
+class DiscoverBody(BaseModel):
+    max_sites: int = Field(default=12, ge=1, le=60)
 
 
 class RunNowBody(BaseModel):
@@ -215,6 +226,16 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/projects/{project_id}/published")
+    def published(project_id: str, limit: int = 30) -> dict[str, Any]:
+        """What actually went out: published articles with their post text."""
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=400, detail="limit must be 1..200")
+        try:
+            return project_published(reg, project_id, data_dir=config.data_dir, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/projects/{project_id}/run")
     def run_now(project_id: str, body: RunNowBody) -> dict[str, Any]:
         """Start collect/process/publish/deliver in a background thread (M9c)."""
@@ -283,6 +304,46 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/source-candidates")
+    def source_candidates() -> dict[str, Any]:
+        """Feeds discovery proposes; nothing here is part of the pipeline yet."""
+        return list_candidates(config.data_dir)
+
+    @app.post("/api/source-candidates/scan")
+    def scan_for_sources(body: DiscoverBody) -> dict[str, Any]:
+        """Start a discovery pass in the background (shares the run-now slot)."""
+        project = reg.get(DEFAULT_PROJECT_ID)
+        try:
+            return start_run(
+                project_id=DEFAULT_PROJECT_ID,
+                data_dir=Path(config.data_dir),
+                db_path=reg.resolve_db_path(project, config.data_dir),
+                stage="discover",
+                limit=body.max_sites,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/source-candidates/{candidate_id}/accept", status_code=201)
+    def accept_source_candidate(candidate_id: str, body: CandidateAcceptBody) -> dict[str, Any]:
+        try:
+            return accept_candidate(
+                candidate_id,
+                data_dir=config.data_dir,
+                relevance_gate=body.relevance_gate,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/source-candidates/{candidate_id}/dismiss")
+    def dismiss_source_candidate(candidate_id: str) -> dict[str, Any]:
+        try:
+            return dismiss_candidate(candidate_id, data_dir=config.data_dir)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/ai-rules")
     def get_ai_rules() -> dict[str, Any]:

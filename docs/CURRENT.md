@@ -3,6 +3,34 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M10): translated headlines, Published tab, source discovery
+
+See D-024.
+
+- **Headlines are translated.** `summarize()` now returns a headline as well as a
+  summary, renditions store it and `format_post` uses it. An English post used to
+  carry the article's original Russian headline above an English body.
+- **Published tab.** `GET /api/projects/{id}/published` returns every published
+  article with the post text per language, whether the channel copy went out,
+  its Telegram message id and how many subscribers received it. The GUI renders
+  the fields as text — feed and model output never reaches the page as markup —
+  with the raw Telegram markup behind a disclosure.
+- **Source discovery.** `telecom_news.source_discovery` follows the outbound
+  links of collected articles, probes each site for a feed (autodiscovery, then
+  the conventional paths) and scores it by the share of recent *headlines* that
+  pass the operator's own keyword gate. Proposals land in
+  `data/source_candidates.json`; the Discovery tab adds one as a normal custom
+  source or dismisses its site for good. Nothing is ever added automatically.
+  `python -m telecom_news discover [--list|--accept ID|--dismiss ID]` is the same
+  thing on a schedule; `stage=discover` runs it from the panel.
+
+**Scoring, verified against live feeds:** an SMS vendor blog scores 40%, a
+general tech feed 0%, and an ecommerce email-marketing blog 10% — the last one
+scored 90% while the gate looked at full text, because such a platform mentions
+SMS in nearly every post. Headlines are what a publisher actually writes about.
+
+**Verified:** `pytest -q` → **362 passed**; ruff / `git diff --check` clean.
+
 ## Session 2026-09-13 (ops): scheduler env, AI-rules contract, rendition backfill
 
 Four production defects found and fixed after M9d went live. See D-023.

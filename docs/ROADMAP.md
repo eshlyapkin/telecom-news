@@ -282,7 +282,11 @@
 языков из `TELECOM_NEWS_TARGET_LANGS`, объединение терминов AI rules со
 встроенными — см. D-022.
 
-**M10+ (later, not this change set):** wizard, templates, clone, per-channel AI
+**M10 (сделано):** переведённые заголовки в renditions, вкладка Published
+(что реально ушло в канал, с предпросмотром по языкам) и автопоиск источников
+(`source_discovery` + вкладка Discovery + `discover` CLI) — см. D-024.
+
+**M11+ (later, not this change set):** wizard, templates, clone, per-channel AI
 filters, RBAC, shared sources, per-project article rows — see vision doc §3.
 
 **Явно НЕ входит в M9:** authentication, multi-destination publish, cost UI,

@@ -60,6 +60,101 @@ def project_queue(
     }
 
 
+def project_published(
+    registry: ProjectRegistry,
+    project_id: str,
+    *,
+    data_dir: Path,
+    limit: int = 30,
+) -> dict[str, Any]:
+    """Published articles with the exact post text that went out, per language.
+
+    Read-only: the preview is rebuilt from the stored rendition, so it shows what
+    the channel received rather than a re-rendering of the article. Fields are
+    returned separately (headline, summary, category) — the GUI must not inject
+    feed-derived HTML into the page, and the Telegram markup is passed along as
+    plain text for inspection.
+    """
+    from ..delivery.telegram import format_post
+
+    project = registry.get(project_id)
+    db_path = registry.resolve_db_path(project, data_dir)
+    if not db_path.exists():
+        return {"project_id": project_id, "db_exists": False, "posts": [], "count": 0}
+
+    config = load_config()
+    channel_ids = {chat_id for _lang, chat_id in config.channel_chat_ids}
+    db = _db(db_path)
+    rows: list[dict[str, Any]] = []
+    for article in db.published_articles(limit=limit):
+        article_id = article.id
+        if article_id is None:
+            continue
+        deliveries = db.deliveries_of(article_id)
+        renditions: list[dict[str, Any]] = []
+        for lang in sorted({str(row["lang"]) for row in deliveries} | set(config.target_langs)):
+            stored = db.get_rendition(article_id, lang)
+            legacy = (article.llm_result or {}).get("summary")
+            legacy_lang = (article.llm_result or {}).get("summary_language") or config.target_lang
+            if stored is not None:
+                headline = str(stored.get("title") or "") or article.title
+                summary = str(stored.get("summary") or "")
+            elif legacy and legacy_lang == lang:
+                headline, summary = article.title, str(legacy)
+            else:
+                continue
+            channel = [
+                row
+                for row in deliveries
+                if row["lang"] == lang and str(row["chat_id"]) in channel_ids
+            ]
+            private = [
+                row
+                for row in deliveries
+                if row["lang"] == lang and str(row["chat_id"]) not in channel_ids
+            ]
+            renditions.append(
+                {
+                    "lang": lang,
+                    "headline": headline,
+                    "summary": summary,
+                    "telegram_html": format_post(
+                        article, lang=lang, summary=summary, title=headline, show_flag=True
+                    ),
+                    "channel_sent": bool(channel),
+                    "message_id": channel[0]["message_id"] if channel else None,
+                    "sent_at": channel[0]["sent_at"] if channel else None,
+                    "subscriber_sends": len(private),
+                    "failed": [row["chat_id"] for row in deliveries if row["status"] == "failed"],
+                }
+            )
+        rows.append(
+            {
+                "id": article_id,
+                "title": article.title,
+                "url": article.url,
+                "source_id": article.source_id,
+                "category": article.category,
+                "published_at": (
+                    article.published_at.isoformat() if article.published_at else None
+                ),
+                "posted_at": (
+                    article.published_at_telegram.isoformat()
+                    if article.published_at_telegram
+                    else None
+                ),
+                "renditions": renditions,
+            }
+        )
+    return {
+        "project_id": project_id,
+        "db_exists": True,
+        "posts": rows,
+        "count": len(rows),
+        "target_langs": list(config.target_langs),
+    }
+
+
 def ops_status(
     registry: ProjectRegistry,
     *,

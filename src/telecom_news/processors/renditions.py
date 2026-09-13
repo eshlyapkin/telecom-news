@@ -84,17 +84,20 @@ def ensure_rendition(
             lang,
             result.summary[:80],
         )
+    # The model's headline when it produced one, the original otherwise: a post
+    # must never end up with an empty title.
+    title = result.title or article.title
     db.save_rendition(
         article_id,
         lang,
-        title=article.title,
+        title=title,
         summary=result.summary,
         model=model_name,
     )
     return Rendition(
         article_id=article_id,
         lang=lang,
-        title=article.title,
+        title=title,
         summary=result.summary,
         model=model_name or "",
     )

@@ -31,7 +31,7 @@ def _now() -> str:
 class RunSnapshot:
     status: str = "idle"  # idle | running | ok | error
     project_id: str = ""
-    stage: str = "full"  # full | collect | process | publish | deliver
+    stage: str = "full"  # full | collect | process | publish | deliver | discover
     dry_run: bool = False
     limit: int | None = None
     max_posts: int | None = None
@@ -99,7 +99,7 @@ def start_run(
     global _WORKER, _LOG_BUF, _STATE
 
     stage = (stage or "full").strip().lower()
-    allowed = {"full", "collect", "process", "publish", "deliver"}
+    allowed = {"full", "collect", "process", "publish", "deliver", "discover"}
     if stage not in allowed:
         raise ValueError(f"stage must be one of {sorted(allowed)}")
     if limit is not None and limit < 1:
@@ -231,6 +231,11 @@ def _default_runner(
         return _cmd_publish(max_posts, dry_run)
     if stage == "deliver":
         return _cmd_deliver(None, dry_run)
+    if stage == "discover":
+        # Proposals only: a scan never changes the source registry by itself.
+        from .cli import _cmd_discover
+
+        return _cmd_discover(max_sites=limit or 12)
     raise ValueError(f"unknown stage {stage!r}")
 
 

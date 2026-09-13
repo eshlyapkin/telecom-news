@@ -51,7 +51,9 @@ function showTab(name) {
     panel.hidden = panel.id !== `panel-${name}`;
   });
   if (name === "queue") refreshQueue();
+  if (name === "published") refreshPublished();
   if (name === "sources") refreshSources();
+  if (name === "discovery") refreshCandidates();
   if (name === "ai-rules") refreshRules();
 }
 
@@ -296,6 +298,79 @@ async function refreshQueue() {
   }
 }
 
+let publishedCache = [];
+
+/* Published posts: what actually went out, per language. Every field is
+   inserted as escaped text — the post body comes from feeds and from the model,
+   so it must never reach the page as markup. */
+async function refreshPublished() {
+  if (!currentProjectId) return;
+  try {
+    const data = await fetchJson(
+      `/api/projects/${encodeURIComponent(currentProjectId)}/published?limit=50`
+    );
+    publishedCache = data.posts || [];
+    el("published-meta").textContent = data.db_exists
+      ? `${data.count} published article(s) · channel languages: ${(data.target_langs || []).join(", ")}`
+      : "No database for this project yet.";
+    renderPublished();
+  } catch (err) {
+    el("published-list").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderPublished() {
+  const q = (el("published-filter").value || "").trim().toLowerCase();
+  const posts = publishedCache.filter((p) => {
+    if (!q) return true;
+    const haystack = [p.title, p.source_id, ...(p.renditions || []).map((r) => r.headline)]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
+  if (!posts.length) {
+    el("published-list").innerHTML = `<p class="muted">Nothing published yet.</p>`;
+    return;
+  }
+  el("published-list").innerHTML = posts
+    .map((p) => {
+      const renditions = (p.renditions || [])
+        .map((r) => {
+          const flag = r.lang === "ru" ? "🇷🇺" : r.lang === "en" ? "🇬🇧" : r.lang;
+          const badge = r.channel_sent
+            ? `<span class="badge running">sent${r.message_id ? ` · id ${escapeHtml(r.message_id)}` : ""}</span>`
+            : `<span class="badge warn">not in channel</span>`;
+          const subs = r.subscriber_sends
+            ? `<span class="badge on">${escapeHtml(r.subscriber_sends)} subscriber(s)</span>`
+            : "";
+          const failed = (r.failed || []).length
+            ? `<span class="badge error">${escapeHtml(r.failed.length)} failed</span>`
+            : "";
+          return `<div class="rendition">
+            <div class="rendition-head">${flag} ${badge} ${subs} ${failed}
+              <span class="muted small">${escapeHtml(fmt(r.sent_at))}</span></div>
+            <div class="post-preview">
+              <strong>${escapeHtml(r.headline)}</strong>
+              <p>${escapeHtml(r.summary)}</p>
+            </div>
+            <details><summary class="muted small">Telegram markup as sent</summary>
+              <pre class="log">${escapeHtml(r.telegram_html)}</pre></details>
+          </div>`;
+        })
+        .join("");
+      return `<article class="card static published-card">
+        <h2>#${escapeHtml(p.id)} · ${escapeHtml(p.source_id)}
+          <span class="badge on">${escapeHtml(fmt(p.category))}</span></h2>
+        <div class="muted small">
+          posted ${escapeHtml(fmt(p.posted_at))} ·
+          <a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">original</a>
+        </div>
+        ${renditions || '<p class="muted small">No rendition stored.</p>'}
+      </article>`;
+    })
+    .join("");
+}
+
 let sourcesCache = [];
 
 async function refreshSources() {
@@ -400,6 +475,102 @@ async function addSource() {
   await refreshAll();
 }
 
+/* Discovery: proposals only. Accepting one calls the same API the Sources tab
+   uses, so a candidate becomes an ordinary custom source. */
+async function refreshCandidates() {
+  try {
+    const data = await fetchJson("/api/source-candidates");
+    el("candidates-meta").textContent =
+      `${data.count} open proposal(s) · ${data.dismissed} dismissed · last scan ${fmt(data.scanned_at)}`;
+    const rows = data.candidates || [];
+    if (!rows.length) {
+      el("candidates-list").innerHTML =
+        `<p class="muted">No proposals yet. Run a scan — it needs collected articles to follow links from.</p>`;
+      renderCandidateActions();
+      return;
+    }
+    el("candidates-list").innerHTML = rows
+      .map((c) => {
+        const rate = Math.round((c.hit_rate || 0) * 100);
+        const samples = (c.sample_titles || [])
+          .map((s) => `<li>${escapeHtml(s)}</li>`)
+          .join("");
+        return `<article class="card static" data-id="${escapeHtml(c.id)}">
+          <h2>${escapeHtml(c.id)}
+            <span class="badge ${rate >= 50 ? "running" : "warn"}">${escapeHtml(rate)}% on topic</span>
+            <span class="badge on">${escapeHtml(c.language)}</span></h2>
+          <div class="kv">
+            <div><span>Feed</span><span><a href="${escapeHtml(c.feed_url)}" target="_blank" rel="noopener">${escapeHtml(c.feed_url)}</a></span></div>
+            <div><span>Matched</span><span>${escapeHtml(c.hits)} of ${escapeHtml(c.items)} recent items</span></div>
+            <div><span>Found</span><span>${escapeHtml(c.origin)}</span></div>
+          </div>
+          ${samples ? `<ul class="samples">${samples}</ul>` : ""}
+          <div class="actions">
+            <button type="button" class="btn ok candidate-add">Add as source</button>
+            <button type="button" class="btn danger candidate-dismiss">Dismiss</button>
+          </div>
+        </article>`;
+      })
+      .join("");
+    renderCandidateActions();
+  } catch (err) {
+    el("candidates-list").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderCandidateActions() {
+  document.querySelectorAll("#candidates-list .card").forEach((card) => {
+    const id = card.dataset.id;
+    const act = async (path, btn) => {
+      btn.disabled = true;
+      try {
+        await fetchJson(`/api/source-candidates/${encodeURIComponent(id)}/${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        await refreshCandidates();
+        await refreshSources();
+        await refreshAll();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    };
+    card.querySelector(".candidate-add").addEventListener("click", (e) => act("accept", e.target));
+    card
+      .querySelector(".candidate-dismiss")
+      .addEventListener("click", (e) => act("dismiss", e.target));
+  });
+}
+
+async function startDiscoveryScan() {
+  const banner = el("discover-banner");
+  const data = await fetchJson("/api/source-candidates/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_sites: Number(el("discover-sites").value) || 12 }),
+  });
+  banner.hidden = false;
+  banner.className = "banner";
+  banner.textContent = "Scanning… this probes external sites and takes a while.";
+  renderRun(data);
+  const poll = setInterval(async () => {
+    try {
+      const status = await fetchJson("/api/run/status");
+      if (status.status !== "running") {
+        clearInterval(poll);
+        banner.className = status.status === "ok" ? "banner ok" : "banner bad";
+        banner.textContent =
+          status.status === "ok" ? "Scan finished." : `Scan failed: ${status.error || ""}`;
+        refreshCandidates();
+      }
+    } catch {
+      /* ignore transient */
+    }
+  }, 2000);
+}
+
 function termsToText(list) {
   return (list || []).join("\n");
 }
@@ -499,7 +670,11 @@ document.querySelectorAll(".tab").forEach((btn) => {
 });
 el("btn-refresh").onclick = () => refreshAll();
 el("btn-refresh-queue").onclick = () => refreshQueue();
+el("btn-refresh-published").onclick = () => refreshPublished();
+el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();
+el("btn-refresh-candidates").onclick = () => refreshCandidates();
+el("btn-discover-scan").onclick = () => startDiscoveryScan().catch((e) => alert(e.message));
 el("btn-refresh-rules").onclick = () => refreshRules();
 el("btn-save-rules").onclick = () => saveRules().catch((e) => alert(e.message));
 el("btn-reset-rules").onclick = () => resetRules().catch((e) => alert(e.message));

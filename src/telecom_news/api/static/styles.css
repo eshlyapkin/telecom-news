@@ -151,3 +151,20 @@ a { color: #9ec1ff; }
   color: var(--muted); font-size: 0.8rem;
 }
 code { color: #9ec1ff; }
+
+/* Published tab: one card per article, one block per language rendition. */
+.published-card { margin-bottom: 0.75rem; }
+.published-card h2 { font-size: 0.95rem; }
+.rendition {
+  border-top: 1px solid var(--border); margin-top: 0.6rem; padding-top: 0.6rem;
+}
+.rendition-head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.post-preview { margin: 0.4rem 0; }
+.post-preview p { margin: 0.3rem 0 0; color: var(--muted); }
+details summary { cursor: pointer; }
+
+/* Discovery tab: one card per proposed feed. */
+.samples { margin: 0.4rem 0 0.6rem 1rem; padding: 0; color: var(--muted); font-size: 0.85rem; }
+.samples li { margin: 0.15rem 0; }
+label.inline { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+label.inline input { width: 4.5rem; }

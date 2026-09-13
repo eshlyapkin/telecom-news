@@ -277,6 +277,26 @@ class Database:
             ).fetchone()
         return _row_to_article(row) if row is not None else None
 
+    def published_articles(self, limit: int = 50) -> list[Article]:
+        """Most recently published articles, newest first (control panel)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM articles WHERE status = 'published' "
+                "ORDER BY COALESCE(published_at_telegram, '') DESC, id DESC LIMIT ?",
+                (max(1, int(limit)),),
+            )
+            return [_row_to_article(row) for row in rows]
+
+    def deliveries_of(self, article_id: int) -> list[dict[str, Any]]:
+        """Every delivery row of one article — channel posts and private sends."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT chat_id, lang, message_id, status, attempts, last_error, sent_at "
+                "FROM deliveries WHERE article_id = ? ORDER BY sent_at, lang",
+                (article_id,),
+            )
+            return [dict(row) for row in rows]
+
     def oldest_with_status(self, status: str) -> Article | None:
         """Oldest article (lowest id) with ``status``, or None when there is none."""
         _validate_status(status)

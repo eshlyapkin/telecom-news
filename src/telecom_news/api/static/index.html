@@ -25,7 +25,9 @@
   <nav class="tabs" id="tabs">
     <button type="button" class="tab active" data-tab="overview">Overview</button>
     <button type="button" class="tab" data-tab="queue">Queue</button>
+    <button type="button" class="tab" data-tab="published">Published</button>
     <button type="button" class="tab" data-tab="sources">Sources</button>
+    <button type="button" class="tab" data-tab="discovery">Discovery</button>
     <button type="button" class="tab" data-tab="ai-rules">AI rules</button>
   </nav>
 
@@ -106,6 +108,18 @@
       </thead><tbody></tbody></table></div>
     </section>
 
+    <section class="panel tab-panel" id="panel-published" hidden>
+      <div class="toolbar">
+        <h1>Published</h1>
+        <div class="actions">
+          <input type="search" id="published-filter" placeholder="Filter headline / source…" />
+          <button type="button" class="btn" id="btn-refresh-published">Refresh</button>
+        </div>
+      </div>
+      <p class="muted small" id="published-meta"></p>
+      <div id="published-list"></div>
+    </section>
+
     <section class="panel tab-panel" id="panel-sources" hidden>
       <div class="toolbar">
         <h1>Sources</h1>
@@ -151,6 +165,30 @@
       <div class="table-wrap"><table id="table-sources"><thead>
         <tr><th>on</th><th>id</th><th>lang</th><th>gate</th><th>url</th><th>del</th></tr>
       </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="panel tab-panel" id="panel-discovery" hidden>
+      <div class="toolbar">
+        <h1>Discovery</h1>
+        <div class="actions">
+          <label class="inline">Sites to probe
+            <input type="number" id="discover-sites" min="1" max="60" value="12" />
+          </label>
+          <button type="button" class="btn primary" id="btn-discover-scan">Scan now</button>
+          <button type="button" class="btn" id="btn-refresh-candidates">Refresh</button>
+        </div>
+      </div>
+      <p class="banner" id="discover-banner" hidden></p>
+      <p class="muted small">
+        A scan follows the outbound links of already collected articles, probes each site for
+        an RSS/Atom feed and scores it with <strong>your AI rules</strong> — the share of recent
+        items that pass the messaging gate. Nothing is added to the pipeline automatically:
+        <strong>Add</strong> turns a proposal into a normal source,
+        <strong>Dismiss</strong> keeps later scans quiet about it.
+        Schedule <code>python -m telecom_news discover</code> to keep watching continuously.
+      </p>
+      <p class="muted small" id="candidates-meta"></p>
+      <div id="candidates-list"></div>
     </section>
 
     <section class="panel tab-panel" id="panel-ai-rules" hidden>
@@ -200,7 +238,7 @@
   </main>
 
   <footer class="foot">
-    No auth · bind 127.0.0.1 only · M9d: pause / queue / sources add-delete / run-now / AI rules.
+    No auth · bind 127.0.0.1 only · pause / queue / published / sources add-delete / run-now / AI rules / discovery.
   </footer>
   <script src="/static/app.js"></script>
 </body>

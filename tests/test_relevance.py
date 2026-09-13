@@ -303,3 +303,26 @@ def test_classification_survives_a_policy_without_a_format_section(tmp_path, mon
 def test_network_protocol_is_an_accepted_category() -> None:
     fake = _FakeLLM(['{"relevant": true, "category": "network_protocol", "reason": "SS7"}'])
     assert check_relevance(fake, _article()).category == "network_protocol"
+
+
+# --- translated headlines (2026-09-13) -------------------------------------
+#
+# An English post used to carry the article's original Russian headline above an
+# English summary, because renditions stored `title=article.title` and
+# `summarize()` never produced one.
+
+
+def test_summarize_returns_a_translated_headline() -> None:
+    fake = _FakeLLM(['{"title": "Sinch ships SMS firewall", "summary": "Short summary."}'])
+    result = summarize(fake, _article(), target_lang="en")
+    assert result.title == "Sinch ships SMS firewall"
+    assert result.summary == "Short summary."
+    system = fake.calls[0][0]["content"]
+    assert "headline" in system and "English" in system
+
+
+def test_summarize_without_a_headline_keeps_working() -> None:
+    """Older models (and the pre-2026-09-13 contract) reply with a summary only."""
+    result = summarize(_FakeLLM(['{"summary": "Short summary."}']), _article(), target_lang="en")
+    assert result.title == ""
+    assert result.summary == "Short summary."

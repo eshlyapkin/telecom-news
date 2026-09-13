@@ -65,6 +65,7 @@ data/disabled_sources.json
 data/ai_rules.json
 data/custom_sources.json
 data/removed_sources.json
+data/source_candidates.json
 data/last_run.json
 data/logs/run-now.log
 *.patch
