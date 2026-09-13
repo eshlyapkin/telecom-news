@@ -357,26 +357,39 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         """Feeds discovery proposes; nothing here is part of the pipeline yet."""
         return list_candidates(config.data_dir)
 
-    @app.get("/api/discovery-queries")
-    def discovery_queries() -> dict[str, Any]:
-        from ..source_discovery import DEFAULT_QUERIES, queries_path
+    def _queries_payload() -> dict[str, Any]:
+        """Topics, where they come from, and the batch the next scan will run."""
+        from ..source_discovery import (
+            QUERIES_PER_SCAN,
+            load_state,
+            queries_are_custom,
+            queries_for_scan,
+            queries_from_rules,
+            queries_path,
+        )
 
+        queries = load_queries(config.data_dir)
+        offset = int(load_state(config.data_dir).get("query_offset") or 0)
         return {
-            "queries": load_queries(config.data_dir),
-            "defaults": list(DEFAULT_QUERIES),
+            "queries": queries,
+            "count": len(queries),
+            # "ai-rules" means the list is generated from the relevance terms, so
+            # editing the AI rules changes what discovery hunts for.
+            "source": "custom" if queries_are_custom(config.data_dir) else "ai-rules",
+            "from_rules": queries_from_rules(config.data_dir),
+            "per_scan": QUERIES_PER_SCAN,
+            "next_batch": queries_for_scan(queries, offset=offset),
             "path": str(queries_path(config.data_dir)),
         }
+
+    @app.get("/api/discovery-queries")
+    def discovery_queries() -> dict[str, Any]:
+        return _queries_payload()
 
     @app.put("/api/discovery-queries")
     def set_discovery_queries(body: DiscoveryQueriesBody) -> dict[str, Any]:
-        from ..source_discovery import DEFAULT_QUERIES, queries_path
-
-        saved = save_queries(body.queries, config.data_dir)
-        return {
-            "queries": saved,
-            "defaults": list(DEFAULT_QUERIES),
-            "path": str(queries_path(config.data_dir)),
-        }
+        save_queries(body.queries, config.data_dir)
+        return _queries_payload()
 
     @app.post("/api/source-candidates/scan")
     def scan_for_sources(body: DiscoverBody) -> dict[str, Any]:

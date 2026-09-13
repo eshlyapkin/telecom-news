@@ -74,16 +74,24 @@ SEARCH_LOCALES = {
     "en": {"hl": "en-US", "gl": "US", "ceid": "US:en"},
     "ru": {"hl": "ru", "gl": "RU", "ceid": "RU:ru"},
 }
+# Fallback only: used when the AI rules yield nothing searchable, which happens
+# if an operator empties the term list entirely.
 DEFAULT_QUERIES: tuple[str, ...] = (
     '"A2P SMS"',
     '"SMS aggregator" OR "messaging aggregator"',
     '"business messaging" SMS',
     '"SMS firewall" OR "SMS fraud" OR smishing',
-    '"RCS business messaging"',
-    'SMPP OR SMSC OR "SMS gateway"',
     "смс рассылки бизнес",
-    "смс мошенничество операторы",
 )
+
+# How the search topics are built from the AI rules. A term is searchable when it
+# is specific enough to return news rather than noise: a phrase always is, a lone
+# acronym like "sms" or "ss7" is not. Terms are then OR-ed in small groups, and a
+# scan works through the groups a few at a time, so the whole rule set gets
+# covered over several runs instead of an arbitrary dozen terms being picked.
+MIN_SINGLE_WORD_QUERY_LEN = 5
+TERMS_PER_QUERY = 5
+QUERIES_PER_SCAN = 4
 
 # Links that look like a feed or a page listing feeds. Assets are excluded: an
 # "rss.svg" icon is not a feed, and thefastmode.com links exactly that next to
@@ -234,7 +242,13 @@ def candidates_path(data_dir: Path | None = None) -> Path:
 def load_state(data_dir: Path | None = None) -> dict[str, Any]:
     """Stored candidates plus the dismissed feed urls, tolerant of a broken file."""
     path = candidates_path(data_dir)
-    empty: dict[str, Any] = {"candidates": [], "dismissed": [], "scanned_at": None}
+    empty: dict[str, Any] = {
+        "candidates": [],
+        "dismissed": [],
+        "scanned_at": None,
+        # Where the next scan resumes in the topic list (see `queries_for_scan`).
+        "query_offset": 0,
+    }
     if not path.is_file():
         return empty
     try:
@@ -245,10 +259,15 @@ def load_state(data_dir: Path | None = None) -> dict[str, Any]:
         return empty
     candidates = [item for item in raw.get("candidates", []) if isinstance(item, dict)]
     dismissed = [str(item) for item in raw.get("dismissed", []) if str(item).strip()]
+    try:
+        offset = int(raw.get("query_offset") or 0)
+    except (TypeError, ValueError):
+        offset = 0
     return {
         "candidates": candidates,
         "dismissed": dismissed,
         "scanned_at": raw.get("scanned_at"),
+        "query_offset": max(0, offset),
     }
 
 
@@ -336,21 +355,76 @@ def queries_path(data_dir: Path | None = None) -> Path:
     return load_config().data_dir / "discovery_queries.json"
 
 
+def _searchable(term: str) -> bool:
+    """A term specific enough to be worth a news search on its own."""
+    return len(term.split()) >= 2 or len(term) >= MIN_SINGLE_WORD_QUERY_LEN
+
+
+def queries_from_rules(data_dir: Path | None = None) -> list[str]:
+    """Search topics derived from the operator's AI rules.
+
+    The relevance terms already state what this project is about, so discovery
+    searches for the same thing it later scores against. Two hand-kept lists
+    would drift apart, and a rule the operator adds would never widen the hunt.
+
+    Terms are OR-ed in small groups and the two languages are interleaved, so any
+    few consecutive queries cover both the English and the Russian press.
+    """
+    from itertools import zip_longest
+
+    from .ai_rules import load_rules
+
+    try:
+        terms = [term for term in load_rules(data_dir).messaging_terms if _searchable(term)]
+    except Exception:  # noqa: BLE001 — discovery must not depend on rules I/O
+        return list(DEFAULT_QUERIES)
+
+    english = [term for term in terms if not _CYRILLIC_RE.search(term)]
+    russian = [term for term in terms if _CYRILLIC_RE.search(term)]
+
+    def _group(items: list[str]) -> list[str]:
+        return [
+            " OR ".join(f'"{term}"' for term in items[index : index + TERMS_PER_QUERY])
+            for index in range(0, len(items), TERMS_PER_QUERY)
+        ]
+
+    queries = [
+        query for pair in zip_longest(_group(english), _group(russian)) for query in pair if query
+    ]
+    return queries or list(DEFAULT_QUERIES)
+
+
 def load_queries(data_dir: Path | None = None) -> list[str]:
-    """Operator's search topics, or the built-in defaults."""
+    """Search topics: the operator's own list when set, otherwise the AI rules."""
     path = queries_path(data_dir)
     try:
         if not path.is_file():
-            return list(DEFAULT_QUERIES)
+            return queries_from_rules(data_dir)
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return list(DEFAULT_QUERIES)
+        return queries_from_rules(data_dir)
     if isinstance(raw, dict):
         raw = raw.get("queries") or []
     if not isinstance(raw, list):
-        return list(DEFAULT_QUERIES)
+        return queries_from_rules(data_dir)
     queries = [str(item).strip() for item in raw if str(item).strip()]
-    return queries or list(DEFAULT_QUERIES)
+    return queries or queries_from_rules(data_dir)
+
+
+def queries_are_custom(data_dir: Path | None = None) -> bool:
+    """True when the operator replaced the topics derived from the AI rules."""
+    return queries_path(data_dir).is_file()
+
+
+def queries_for_scan(
+    queries: list[str], *, offset: int, per_scan: int = QUERIES_PER_SCAN
+) -> list[str]:
+    """The slice of topics one scan searches, wrapping around the list."""
+    if not queries:
+        return []
+    count = min(max(1, per_scan), len(queries))
+    start = offset % len(queries)
+    return (queries + queries)[start : start + count]
 
 
 def save_queries(queries: list[str], data_dir: Path | None = None) -> list[str]:
@@ -361,7 +435,7 @@ def save_queries(queries: list[str], data_dir: Path | None = None) -> list[str]:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not cleaned:
             path.unlink(missing_ok=True)
-            return list(DEFAULT_QUERIES)
+            return queries_from_rules(data_dir)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
             json.dumps({"queries": cleaned}, ensure_ascii=False, indent=2) + "\n",
@@ -626,9 +700,14 @@ def scan(
     origins: dict[str, str] = {}
     searched = 0
     if use_search:
-        queries = load_queries(data_dir)
+        all_queries = load_queries(data_dir)
+        offset = int(state.get("query_offset") or 0)
+        queries = queries_for_scan(all_queries, offset=offset)
         searched = len(queries)
-        print(f"discovery: searching {searched} topic(s) worldwide")
+        print(
+            f"discovery: searching {searched} of {len(all_queries)} topic(s) worldwide "
+            f"(from your AI rules, continuing at #{offset % max(1, len(all_queries)) + 1})"
+        )
         for host, url in search_publisher_hosts(queries, client=client):
             if host not in seen_hosts:
                 seen_hosts.add(host)
@@ -730,6 +809,9 @@ def scan(
             candidate.to_dict() for candidate in added if candidate.feed_url not in known_urls
         )
         state["scanned_at"] = _now()
+        # Resume where this pass stopped, so consecutive scans work through the
+        # whole rule set instead of re-running the same few topics.
+        state["query_offset"] = int(state.get("query_offset") or 0) + searched
         save_state(state, data_dir)
 
     print(
@@ -738,6 +820,7 @@ def scan(
     )
     return {
         "searched_topics": searched,
+        "topics_total": len(load_queries(data_dir)) if use_search else 0,
         "checked_sites": checked,
         "look_for": look_for,
         "new_candidates": len(added),

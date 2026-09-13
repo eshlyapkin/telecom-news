@@ -550,7 +550,14 @@ async function refreshQueries() {
   try {
     const data = await fetchJson("/api/discovery-queries");
     el("discover-queries").value = (data.queries || []).join("\n");
-    el("queries-status").textContent = `Saved in ${data.path}`;
+    const origin =
+      data.source === "ai-rules"
+        ? `${data.count} topic(s) generated from your AI rules`
+        : `${data.count} custom topic(s) — the AI rules would give ${(data.from_rules || []).length}`;
+    const next = (data.next_batch || []).map((q) => `· ${q}`).join("\n");
+    el("queries-status").textContent =
+      `${origin}. Each scan searches ${data.per_scan}, continuing where the last one stopped.` +
+      (next ? `\nNext scan:\n${next}` : "");
   } catch (err) {
     el("queries-status").textContent = err.message;
   }
@@ -565,7 +572,7 @@ async function saveQueries(queries) {
   el("discover-queries").value = (data.queries || []).join("\n");
   el("queries-status").textContent = queries.length
     ? "Topics saved. They apply to the next scan."
-    : "Restored the built-in topics.";
+    : "Back to the topics generated from your AI rules.";
 }
 
 async function refreshCandidates() {

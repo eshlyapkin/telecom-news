@@ -3,6 +3,34 @@
 Canonical project handoff. Claims rest on repository files, Git state and actual
 command results; anything else is marked NOT VERIFIED.
 
+## Session 2026-09-13 (M11b): discovery searches what the AI rules say
+
+Discovery *scored* candidates with the AI rules from the start, but *what it
+searched for* was a second hand-kept list — so adding a rule never widened the
+hunt, and the two could drift apart unnoticed. The operator asked why, and the
+answer was only that 312 relevance terms cannot each become a news query.
+
+Topics are now generated from the messaging terms: terms too generic to search
+alone (`sms`, `ss7`) are dropped, the rest are OR-ed in groups of five, and the
+two languages are interleaved so any few consecutive queries cover the English
+and the Russian press. `data/discovery_queries.json` becomes an override for
+things the rules do not express; clearing it returns to the rules.
+
+That yields 59 queries from the operator's rules — far too many for one pass at
+one request each, so a scan takes the next four and stores where it stopped.
+Consecutive scans work through the whole rule set instead of re-running an
+arbitrary dozen terms forever.
+
+**Verified:** adding one term to the rules turned it into a search topic
+immediately (59 → 60 queries) while the other 316 terms stayed untouched.
+`pytest -q` → **416 passed**.
+
+**Incident, contained:** a partial `PUT /api/ai-rules` while testing this replaced
+the operator's curated term list — a PUT sets the field, and the panel always
+sends the whole list, so only a hand-written partial call does this. Restored
+from a backup taken immediately before; the file now matches it byte for byte
+(316 messaging terms, 142 off-topic, the 10907-character prompt).
+
 ## Session 2026-09-13 (M11a): choosing what discovery looks for
 
 A scan already checked both kinds — an RSS feed first, a dated news sitemap when

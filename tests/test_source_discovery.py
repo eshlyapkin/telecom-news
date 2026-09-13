@@ -242,21 +242,77 @@ def test_search_returns_publisher_hosts_not_article_links() -> None:
     assert "sinch.com" not in {host for host, _ in hosts}
 
 
-def test_queries_default_and_round_trip(tmp_path: Path) -> None:
-    assert discovery.load_queries(tmp_path) == list(discovery.DEFAULT_QUERIES)
+def test_topics_are_generated_from_the_ai_rules(tmp_path: Path) -> None:
+    """One source of truth: discovery hunts for what the rules say is relevant."""
+    from telecom_news.ai_rules import invalidate_cache, save_rules
 
+    save_rules({"messaging_terms": ["carrier billing fraud"]}, data_dir=tmp_path)
+    invalidate_cache()
+
+    queries = discovery.queries_from_rules(tmp_path)
+    assert any("carrier billing fraud" in query for query in queries)  # the added rule
+    assert any("smishing" in query for query in queries)  # and the built-in terms
+    assert discovery.load_queries(tmp_path) == queries
+    assert discovery.queries_are_custom(tmp_path) is False
+    invalidate_cache()
+
+
+def test_terms_too_generic_to_search_are_left_out(tmp_path: Path) -> None:
+    """A lone "sms" returns noise; a phrase returns news."""
+    from telecom_news.ai_rules import invalidate_cache, save_rules
+
+    save_rules({"messaging_terms": ["sms", "ss7", "smishing", "sms firewall"]}, data_dir=tmp_path)
+    invalidate_cache()
+    joined = " ".join(discovery.queries_from_rules(tmp_path))
+    assert '"sms firewall"' in joined and '"smishing"' in joined
+    assert '"sms"' not in joined and '"ss7"' not in joined
+    invalidate_cache()
+
+
+def test_a_custom_list_overrides_the_rules_and_can_be_cleared(tmp_path: Path) -> None:
     saved = discovery.save_queries(["  SMPP routing ", "SMPP routing", "смс"], tmp_path)
     assert saved == ["SMPP routing", "смс"]
     assert discovery.load_queries(tmp_path) == ["SMPP routing", "смс"]
+    assert discovery.queries_are_custom(tmp_path) is True
 
-    # an empty list restores the built-ins rather than disabling search silently
-    assert discovery.save_queries([], tmp_path) == list(discovery.DEFAULT_QUERIES)
+    # an empty list goes back to the rules rather than disabling search silently
+    assert discovery.save_queries([], tmp_path) == discovery.queries_from_rules(tmp_path)
     assert not discovery.queries_path(tmp_path).exists()
 
 
-def test_broken_queries_file_falls_back_to_defaults(tmp_path: Path) -> None:
+def test_broken_queries_file_falls_back_to_the_rules(tmp_path: Path) -> None:
     discovery.queries_path(tmp_path).write_text("{oops", encoding="utf-8")
-    assert discovery.load_queries(tmp_path) == list(discovery.DEFAULT_QUERIES)
+    assert discovery.load_queries(tmp_path) == discovery.queries_from_rules(tmp_path)
+
+
+def test_a_scan_works_through_the_topics_in_batches(tmp_path: Path) -> None:
+    """Every rule gets its turn instead of an arbitrary dozen being searched forever."""
+    queries = [f"q{index}" for index in range(10)]
+    assert discovery.queries_for_scan(queries, offset=0, per_scan=4) == ["q0", "q1", "q2", "q3"]
+    assert discovery.queries_for_scan(queries, offset=4, per_scan=4) == ["q4", "q5", "q6", "q7"]
+    # and wraps around rather than stopping at the end
+    assert discovery.queries_for_scan(queries, offset=8, per_scan=4) == ["q8", "q9", "q0", "q1"]
+    assert discovery.queries_for_scan([], offset=0) == []
+
+
+def test_the_offset_advances_between_scans(tmp_path: Path) -> None:
+    searched: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "news.google.com" in url:
+            searched.append(url)
+            return httpx.Response(200, content=SEARCH_FEED.encode("utf-8"))
+        return httpx.Response(404)
+
+    discovery.save_queries([f"topic-{index}" for index in range(8)], tmp_path)
+    db = _seeded_db(tmp_path, {})
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    first = discovery.scan(db=db, data_dir=tmp_path, max_sites=0, client=client)
+    second = discovery.scan(db=db, data_dir=tmp_path, max_sites=0, client=client)
+    assert first["searched_topics"] == second["searched_topics"] == discovery.QUERIES_PER_SCAN
+    assert "topic-0" in searched[0] and "topic-4" in searched[discovery.QUERIES_PER_SCAN]
 
 
 def test_scan_probes_publishers_found_by_search(tmp_path: Path) -> None:
@@ -462,15 +518,19 @@ def test_gui_has_a_discovery_tab(client) -> None:
     assert "refreshCandidates" in js and "candidate-add" in js
 
 
-def test_api_edits_the_search_topics(client) -> None:
+def test_api_edits_the_search_topics(client, tmp_path: Path) -> None:
     body = client.get("/api/discovery-queries").json()
-    assert body["queries"] == list(discovery.DEFAULT_QUERIES)
+    assert body["source"] == "ai-rules"
+    assert body["queries"] == discovery.queries_from_rules(tmp_path)
+    assert len(body["next_batch"]) == body["per_scan"]
 
     updated = client.put("/api/discovery-queries", json={"queries": ["SMPP routing", "  "]})
     assert updated.json()["queries"] == ["SMPP routing"]
+    assert updated.json()["source"] == "custom"
 
     restored = client.put("/api/discovery-queries", json={"queries": []})
-    assert restored.json()["queries"] == list(discovery.DEFAULT_QUERIES)
+    assert restored.json()["source"] == "ai-rules"
+    assert restored.json()["queries"] == discovery.queries_from_rules(tmp_path)
 
 
 def test_gui_exposes_the_search_topics(client) -> None:

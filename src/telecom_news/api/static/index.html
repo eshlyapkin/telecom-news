@@ -228,13 +228,21 @@
       </p>
       <div class="card static">
         <h2>Search topics</h2>
-        <label class="block">One query per line. Russian queries search the Russian-language
-          press, the rest search in English. Operators (quotes, OR) work.
+        <p class="muted small">
+          Generated from the <strong>messaging terms of your AI rules</strong> — discovery
+          hunts for the same thing it later scores against, so widening the rules widens
+          the hunt. Terms too generic to search on their own (<code>sms</code>,
+          <code>ss7</code>) are left out, the rest are OR-ed in small groups, and each scan
+          takes the next few groups so the whole rule set gets covered over several runs.
+          Edit below only to search for something the rules do not express; Russian queries
+          search the Russian-language press.
+        </p>
+        <label class="block">One query per line. Operators (quotes, OR) work.
           <textarea id="discover-queries" rows="6" spellcheck="false"></textarea>
         </label>
         <div class="actions">
           <button type="button" class="btn ok" id="btn-save-queries">Save topics</button>
-          <button type="button" class="btn" id="btn-reset-queries">Restore defaults</button>
+          <button type="button" class="btn" id="btn-reset-queries">Back to AI rules</button>
           <label class="check">
             <input type="checkbox" id="discover-use-search" checked />
             use the news search (off = follow article links only)
