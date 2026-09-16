@@ -69,6 +69,27 @@ rules, discovery topics and re-check period, one-off pipeline runs.
 
 ---
 
+## Session 2026-09-16 (policy): the model did not know what TCPA is
+
+`tcpaworld.com` was added as a source (21% on topic, 7/33). Its first eight
+articles scored **1 relevant out of 8**: the model kept answering "TCPA
+regulations which are unrelated to SMS or mobile messaging" and threw out the
+FCC's changes to opt-out rules, a $9.375M wrong-number texting settlement, and a
+ruling on which numbers may be messaged. The policy listed "consent
+requirements, opt-in / opt-out requirements" but never named the statute, and
+US messaging-law outlets write "calls and texts", not "SMS".
+
+A paragraph naming the TCPA, FCC rulemaking, revocation, wrong-number contacts,
+mini-TCPA statutes and 10DLC/short-code registration went into section 9 of the
+operator policy (backup: `data/backups/ai_rules-20260916T123245Z.json`). The
+same eight articles were re-queued and re-classified: **5 of 8 relevant**, and
+the three still rejected are correctly rejected (an AI-chatbot statute, a
+social-media statute, a podcast promo).
+
+This blindness was not specific to one source: `commlawblog`, `comm-law-center`
+and `beyond-telecom-law-blog` were already in the registry and write the same
+way.
+
 ## Session 2026-09-16 (later): the 403 retry that never ran, and what the queue holds
 
 **The browser User-Agent retry was dead code for discovery.** `fetch_url` reacts
