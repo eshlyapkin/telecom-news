@@ -160,8 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover_parser.add_argument(
         "--min-hit-rate",
         type=float,
-        default=0.25,
-        help="Minimum share of on-topic items for a proposal (0..1, default 0.25)",
+        help="Override the stored threshold for this scan only (0..1)",
     )
     discover_parser.add_argument(
         "--list", action="store_true", dest="show", help="Show stored candidates without scanning"
@@ -194,6 +193,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         help="Store how long a probed site stays skipped (0 = probe every site every scan)",
+    )
+    discover_parser.add_argument(
+        "--set-min-hit-rate",
+        type=float,
+        metavar="RATE",
+        help="Store the share of on-topic headlines a feed needs to be proposed (0..1)",
     )
     discover_parser.add_argument("--accept", help="Add this candidate id/url as a source")
     discover_parser.add_argument("--dismiss", help="Reject a candidate id/url for good")
@@ -1450,7 +1455,7 @@ def _cmd_recover(limit: int | None = None, max_attempts: int = 3) -> int:
 
 def _cmd_discover(
     max_sites: int = 12,
-    min_hit_rate: float = 0.25,
+    min_hit_rate: float | None = None,
     show: bool = False,
     accept: str | None = None,
     dismiss: str | None = None,
@@ -1459,6 +1464,7 @@ def _cmd_discover(
     recheck: bool = False,
     history: bool = False,
     set_recheck_days: int | None = None,
+    set_min_hit_rate: float | None = None,
 ) -> int:
     """Propose new feeds, or manage the proposals already stored.
 
@@ -1472,6 +1478,19 @@ def _cmd_discover(
     from .storage.database import Database
 
     config = load_config()
+    if set_min_hit_rate is not None:
+        try:
+            saved = source_discovery.save_settings(
+                min_hit_rate=set_min_hit_rate, data_dir=config.data_dir
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"A feed is now proposed when {saved['min_hit_rate']:.0%} of its headlines "
+            "are on topic."
+        )
+        return 0
     if set_recheck_days is not None:
         try:
             saved = source_discovery.save_settings(
@@ -1521,7 +1540,7 @@ def _cmd_discover(
                 file=sys.stderr,
             )
             return 2
-        if not 0.0 <= min_hit_rate <= 1.0:
+        if min_hit_rate is not None and not 0.0 <= min_hit_rate <= 1.0:
             print(
                 f"error: --min-hit-rate must be between 0 and 1 (got {min_hit_rate}).",
                 file=sys.stderr,
@@ -1544,7 +1563,8 @@ def _cmd_discover(
             return 0
         print(
             f"{seen['count']} site(s) probed; {seen['due_for_recheck']} due for a re-check "
-            f"(a site is skipped for {seen['recheck_after_days']} day(s)):"
+            f"(a site is skipped for {seen['recheck_after_days']} day(s); "
+            f"a feed needs {seen['min_hit_rate']:.0%} of its headlines on topic):"
         )
         for row in seen["checked"]:
             rate = f"{float(row['hit_rate']):.0%}" if row["hit_rate"] is not None else "   -"
@@ -1932,6 +1952,7 @@ def main(argv: list[str] | None = None) -> int:
             recheck=args.recheck,
             history=args.history,
             set_recheck_days=args.set_recheck_days,
+            set_min_hit_rate=args.set_min_hit_rate,
         )
     if args.command == "prune":
         return _cmd_prune(args.max_age_days, args.dry_run)

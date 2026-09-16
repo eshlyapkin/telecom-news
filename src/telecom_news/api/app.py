@@ -95,9 +95,15 @@ class DiscoverBody(BaseModel):
 
 
 class DiscoverySettingsBody(BaseModel):
-    """How long a probed site stays skipped. 0 = probe every site every scan."""
+    """Discovery knobs: how long a probed site stays skipped, and how much of a
+    feed must be on topic before it is proposed.
 
-    recheck_after_days: int = Field(ge=0, le=3650)
+    Both are optional so a caller can change one without resetting the other —
+    the partial-PUT lesson from the AI-rules editor (AGENTS.md).
+    """
+
+    recheck_after_days: int | None = Field(default=None, ge=0, le=3650)
+    min_hit_rate: float | None = Field(default=None, ge=0, le=1)
 
 
 class DiscoveryQueriesBody(BaseModel):
@@ -401,24 +407,38 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
 
     @app.get("/api/discovery-settings")
     def discovery_settings() -> dict[str, Any]:
-        from ..source_discovery import RECHECK_AFTER_DAYS, load_settings, settings_path
+        from ..source_discovery import (
+            MIN_HIT_RATE,
+            RECHECK_AFTER_DAYS,
+            load_settings,
+            settings_path,
+        )
 
         payload = load_settings(config.data_dir)
         payload["default_recheck_after_days"] = RECHECK_AFTER_DAYS
+        payload["default_min_hit_rate"] = MIN_HIT_RATE
         payload["path"] = str(settings_path(config.data_dir))
         return payload
 
     @app.put("/api/discovery-settings")
     def set_discovery_settings(body: DiscoverySettingsBody) -> dict[str, Any]:
-        from ..source_discovery import RECHECK_AFTER_DAYS, save_settings, settings_path
+        from ..source_discovery import (
+            MIN_HIT_RATE,
+            RECHECK_AFTER_DAYS,
+            save_settings,
+            settings_path,
+        )
 
         try:
             payload = save_settings(
-                recheck_after_days=body.recheck_after_days, data_dir=config.data_dir
+                recheck_after_days=body.recheck_after_days,
+                min_hit_rate=body.min_hit_rate,
+                data_dir=config.data_dir,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         payload["default_recheck_after_days"] = RECHECK_AFTER_DAYS
+        payload["default_min_hit_rate"] = MIN_HIT_RATE
         payload["path"] = str(settings_path(config.data_dir))
         return payload
 

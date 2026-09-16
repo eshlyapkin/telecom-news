@@ -852,13 +852,93 @@ def test_a_repeat_scan_reaches_further_down_the_ranking(tmp_path: Path) -> None:
 
 
 def test_recheck_period_defaults_and_round_trip(tmp_path: Path) -> None:
-    assert discovery.load_settings(tmp_path) == {"recheck_after_days": discovery.RECHECK_AFTER_DAYS}
+    assert discovery.load_settings(tmp_path) == {
+        "recheck_after_days": discovery.RECHECK_AFTER_DAYS,
+        "min_hit_rate": discovery.MIN_HIT_RATE,
+    }
 
     assert discovery.save_settings(recheck_after_days=7, data_dir=tmp_path) == {
-        "recheck_after_days": 7
+        "recheck_after_days": 7,
+        "min_hit_rate": discovery.MIN_HIT_RATE,
     }
     assert discovery.load_settings(tmp_path)["recheck_after_days"] == 7
     assert discovery.list_checked(tmp_path)["recheck_after_days"] == 7
+
+
+def test_the_threshold_is_stored_and_neither_setting_resets_the_other(tmp_path: Path) -> None:
+    """tcpaworld.com scored 21%: the default 25% is a judgement, not a constant."""
+    discovery.save_settings(recheck_after_days=7, data_dir=tmp_path)
+    discovery.save_settings(min_hit_rate=0.1, data_dir=tmp_path)
+
+    stored = discovery.load_settings(tmp_path)
+    assert stored == {"recheck_after_days": 7, "min_hit_rate": 0.1}
+    assert discovery.list_checked(tmp_path)["min_hit_rate"] == 0.1
+
+    # Saving one field again must not push the other back to its default.
+    discovery.save_settings(recheck_after_days=3, data_dir=tmp_path)
+    assert discovery.load_settings(tmp_path) == {"recheck_after_days": 3, "min_hit_rate": 0.1}
+
+
+def test_an_unusable_threshold_is_rejected(tmp_path: Path) -> None:
+    for value in (-0.1, 1.5, "half"):
+        with pytest.raises(ValueError):
+            discovery.save_settings(min_hit_rate=value, data_dir=tmp_path)
+    assert not discovery.settings_path(tmp_path).exists()
+
+
+# One story in six is about texting — the shape of a legal blog like
+# tcpaworld.com, which scored 21% and was refused by the 25% default.
+LOW_HIT_FEED = """<?xml version="1.0"?><rss version="2.0"><channel>
+  <item><title>Court rules on SMS marketing consent</title><link>https://law.example/1</link>
+        <description>Text message class action.</description></item>
+  <item><title>Data breach settlement approved</title><link>https://law.example/2</link>
+        <description>Privacy suit.</description></item>
+  <item><title>Employment law update</title><link>https://law.example/3</link>
+        <description>Overtime rules.</description></item>
+  <item><title>Antitrust filing</title><link>https://law.example/4</link>
+        <description>Merger review.</description></item>
+  <item><title>Copyright ruling</title><link>https://law.example/5</link>
+        <description>Fair use.</description></item>
+  <item><title>Securities enforcement</title><link>https://law.example/6</link>
+        <description>Disclosure.</description></item>
+</channel></rss>"""
+
+
+def _law_blog_client() -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://law.example/feed/":
+            return httpx.Response(200, content=LOW_HIT_FEED.encode("utf-8"))
+        if url.rstrip("/").endswith("law.example"):
+            return httpx.Response(200, text="<html><head></head><body>site</body></html>")
+        return httpx.Response(404, text="nope")
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_a_scan_uses_the_stored_threshold(tmp_path: Path) -> None:
+    """A feed one story in six on topic: proposed at 0.1, refused at the default."""
+    db = _seeded_db(tmp_path, {1: ["https://law.example/1"], 2: ["https://law.example/2"]})
+
+    refused = discovery.scan(
+        db=db, data_dir=tmp_path, max_sites=5, use_search=False, client=_law_blog_client()
+    )
+    assert refused["new_candidates"] == 0
+    assert discovery.list_checked(tmp_path)["checked"][0]["outcome"] == "off_topic"
+
+    discovery.save_settings(min_hit_rate=0.1, data_dir=tmp_path)
+    accepted = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        recheck=True,
+        client=_law_blog_client(),
+    )
+    assert accepted["new_candidates"] == 1
+    (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
+    assert candidate["feed_url"] == "https://law.example/feed/"
+    assert 0.1 <= candidate["hit_rate"] < discovery.MIN_HIT_RATE
 
 
 def test_an_unusable_period_is_rejected(tmp_path: Path) -> None:

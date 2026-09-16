@@ -585,9 +585,13 @@ async function refreshHistory() {
       fetchJson("/api/discovery-settings"),
     ]);
     el("recheck-days").value = settings.recheck_after_days;
-    const rule = settings.recheck_after_days
+    el("min-hit-rate").value = Math.round((settings.min_hit_rate ?? 0.25) * 100);
+    const skipRule = settings.recheck_after_days
       ? `a site is skipped for ${settings.recheck_after_days} days after a probe`
       : "every site is probed on every scan";
+    const rule = `${skipRule}; a feed needs ${Math.round(
+      (settings.min_hit_rate ?? 0.25) * 100
+    )}% of its headlines on topic`;
     el("history-meta").textContent = data.count
       ? `${data.count} site(s) probed · ${data.due_for_recheck} due for a re-check (${rule})`
       : `No site has been probed yet (${rule}).`;
@@ -831,11 +835,14 @@ el("btn-refresh-published").onclick = () => refreshPublished();
 el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();
 async function saveRecheckDays() {
-  const value = Number(el("recheck-days").value);
+  const days = Number(el("recheck-days").value);
+  // The input is a percentage because that is how the table reads; the API
+  // takes the share, like the CLI and the stored settings file.
+  const rate = Number(el("min-hit-rate").value) / 100;
   await fetchJson("/api/discovery-settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ recheck_after_days: value }),
+    body: JSON.stringify({ recheck_after_days: days, min_hit_rate: rate }),
   });
   await refreshHistory();
 }

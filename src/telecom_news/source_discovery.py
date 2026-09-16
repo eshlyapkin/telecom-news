@@ -382,8 +382,15 @@ def settings_path(data_dir: Path | None = None) -> Path:
 
 
 def load_settings(data_dir: Path | None = None) -> dict[str, Any]:
-    """Operator-tunable discovery settings; defaults when unset or unreadable."""
-    settings: dict[str, Any] = {"recheck_after_days": RECHECK_AFTER_DAYS}
+    """Operator-tunable discovery settings; defaults when unset or unreadable.
+
+    Each field is read on its own, so an unreadable or missing one leaves the
+    other at its default instead of discarding both.
+    """
+    settings: dict[str, Any] = {
+        "recheck_after_days": RECHECK_AFTER_DAYS,
+        "min_hit_rate": MIN_HIT_RATE,
+    }
     path = settings_path(data_dir)
     try:
         if not path.is_file():
@@ -396,32 +403,59 @@ def load_settings(data_dir: Path | None = None) -> dict[str, Any]:
     try:
         days = int(raw["recheck_after_days"])
     except (KeyError, TypeError, ValueError):
-        return settings
-    if 0 <= days <= MAX_RECHECK_AFTER_DAYS:
-        settings["recheck_after_days"] = days
+        pass
+    else:
+        if 0 <= days <= MAX_RECHECK_AFTER_DAYS:
+            settings["recheck_after_days"] = days
+    try:
+        rate = float(raw["min_hit_rate"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    else:
+        if 0.0 <= rate <= 1.0:
+            settings["min_hit_rate"] = rate
     return settings
 
 
-def save_settings(*, recheck_after_days: int, data_dir: Path | None = None) -> dict[str, Any]:
-    """Persist the settings. Raises ValueError on a value that makes no sense."""
-    try:
-        days = int(recheck_after_days)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("recheck_after_days must be a whole number of days") from exc
-    if not 0 <= days <= MAX_RECHECK_AFTER_DAYS:
-        raise ValueError(
-            f"recheck_after_days must be between 0 and {MAX_RECHECK_AFTER_DAYS} "
-            "(0 = probe every site on every scan)"
-        )
+def save_settings(
+    *,
+    recheck_after_days: int | None = None,
+    min_hit_rate: float | None = None,
+    data_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Persist the settings. Raises ValueError on a value that makes no sense.
+
+    Only the fields actually given are changed. A caller that knows about one
+    setting must not reset the other by omission — the same rule the AI-rules
+    editor learned the hard way (AGENTS.md, "never send a partial PUT").
+    """
+    settings = load_settings(data_dir)
+    if recheck_after_days is not None:
+        try:
+            days = int(recheck_after_days)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("recheck_after_days must be a whole number of days") from exc
+        if not 0 <= days <= MAX_RECHECK_AFTER_DAYS:
+            raise ValueError(
+                f"recheck_after_days must be between 0 and {MAX_RECHECK_AFTER_DAYS} "
+                "(0 = probe every site on every scan)"
+            )
+        settings["recheck_after_days"] = days
+    if min_hit_rate is not None:
+        try:
+            rate = float(min_hit_rate)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("min_hit_rate must be a number between 0 and 1") from exc
+        if not 0.0 <= rate <= 1.0:
+            raise ValueError("min_hit_rate must be between 0 and 1 (0.25 = a quarter on topic)")
+        settings["min_hit_rate"] = rate
     path = settings_path(data_dir)
     with _LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps({"recheck_after_days": days}, indent=2) + "\n", encoding="utf-8"
-        )
+        temporary.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
         temporary.replace(path)
-    return {"recheck_after_days": days}
+    return settings
 
 
 def queries_path(data_dir: Path | None = None) -> Path:
@@ -744,7 +778,7 @@ def scan(
     db: Any,
     data_dir: Path | None = None,
     max_sites: int = 12,
-    min_hit_rate: float = MIN_HIT_RATE,
+    min_hit_rate: float | None = None,
     use_search: bool = True,
     look_for: str = LOOK_FOR_BOTH,
     recheck: bool = False,
@@ -768,6 +802,11 @@ def scan(
     look_for = (look_for or LOOK_FOR_BOTH).strip().lower()
     if look_for not in LOOK_FOR_CHOICES:
         raise ValueError(f"look_for must be one of {', '.join(LOOK_FOR_CHOICES)}")
+    # The threshold is the operator's, like the re-check period: what counts as
+    # "on topic enough" depends on the beat being covered, and a legal blog that
+    # writes about texting in one headline out of five is still worth reading.
+    if min_hit_rate is None:
+        min_hit_rate = float(load_settings(data_dir)["min_hit_rate"])
     state = load_state(data_dir)
     dismissed = set(state["dismissed"])
     # Dismiss is a verdict about the outlet, not about one URL of it: a site
@@ -1009,7 +1048,8 @@ OUTCOME_LABELS: dict[str, str] = {
 def list_checked(data_dir: Path | None = None, *, limit: int = 200) -> dict[str, Any]:
     """Where the scans have been: one row per host, most recent first."""
     state = load_state(data_dir)
-    cooldown_days = int(load_settings(data_dir)["recheck_after_days"])
+    settings = load_settings(data_dir)
+    cooldown_days = int(settings["recheck_after_days"])
     now = datetime.now(timezone.utc)
     rows: list[dict[str, Any]] = []
     for host, entry in state["checked"].items():
@@ -1044,6 +1084,7 @@ def list_checked(data_dir: Path | None = None, *, limit: int = 200) -> dict[str,
         "checked": rows[:limit],
         "count": len(rows),
         "recheck_after_days": cooldown_days,
+        "min_hit_rate": float(settings["min_hit_rate"]),
         "due_for_recheck": sum(1 for row in rows if row["due_for_recheck"]),
     }
 

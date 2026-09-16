@@ -79,6 +79,26 @@ which applies.
 .venv/bin/python -m telecom_news discover --recheck               # ignore it once
 ```
 
+## The threshold is yours to set
+
+How much of a feed must be on topic before it is proposed lives next to the
+re-check period, in the panel and in `data/discovery_settings.json`. The default
+is 25%.
+
+```bash
+.venv/bin/python -m telecom_news discover --set-min-hit-rate 0.2  # stored
+.venv/bin/python -m telecom_news discover --min-hit-rate 0.1      # this scan only
+```
+
+Lower it when the beat you want is covered by outlets that write about it in
+one headline out of five. `tcpaworld.com` — US court and FCC rulings on text
+marketing, exactly the regulation the channel wants — scores 21% and was refused
+by the default until the threshold moved to 20% (2026-09-16).
+
+Lower it too far and the pool fills with general news: at 10% the near misses
+were `theguardian.com`, `appuals.com` and a comments feed. Read `--history`
+before choosing, then accept by hand.
+
 ## Reading a rejection
 
 `--history` is where "why is this site not proposed?" is answered:
@@ -94,4 +114,12 @@ which applies.
   to link-following instead of failing; `--no-search` forces that.
 - Outlets whose sitemap carries no dates cannot be read at all.
 - Sites behind a WAF (403 on everything) are recorded as unreachable and retried
-  after the cooldown.
+  after the cooldown. A full browser header set does not help: `capacitymedia.com`,
+  `telecoms.com`, `mobileecosystemforum.com`, `commsbusiness.co.uk` and
+  `mobilemarketingmagazine.com` refuse every automated request (checked
+  2026-09-16). Several of the best messaging outlets simply cannot be read, and
+  no setting changes that.
+- A 403 from the **home page** no longer hides the feed: the browser-User-Agent
+  retry used to be skipped entirely on a probe, because the switch spent the one
+  attempt a probe is allowed. `mobileworldlive.com` was invisible for that reason
+  alone (fixed 2026-09-16).

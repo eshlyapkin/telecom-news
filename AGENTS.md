@@ -91,6 +91,19 @@ The full reasoning is in DECISIONS.
   order; telecompaper.com lists 19982 undated URLs (D-026).
 - `~/.config/telecom-news/env` is a systemd EnvironmentFile: `VAR=value`, never
   `export VAR=value`, which systemd drops silently.
+- The classifier knows only what the policy **names**. It rejected FCC opt-out
+  rulemaking as "TCPA regulations unrelated to SMS" because the policy said
+  "opt-in/opt-out requirements" and never said TCPA; naming the statute took the
+  same source from 1 relevant article in 8 to 5 in 8 (2026-09-16). When a whole
+  class of news is missing, read the rejection reasons before blaming the code.
+- `telecom-news-serve` holds the code it was started with. After changing Python
+  under `src/`, `systemctl --user restart telecom-news-serve` or the panel keeps
+  running the old version — including the bug you just fixed. The scheduled
+  pipeline is unaffected: it starts a fresh process per run.
+- A settings writer changes only the fields it was given. `save_settings` takes
+  `recheck_after_days` and `min_hit_rate` independently, for the same reason the
+  AI-rules editor must send the whole list: a caller that knows about one field
+  must not reset the other by omission.
 
 TESTS ARE HERMETIC
 

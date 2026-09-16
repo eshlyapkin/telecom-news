@@ -267,6 +267,10 @@
           <input type="number" id="recheck-days" min="0" max="3650" />
         </label>
         <span class="muted small">days (0 = probe every site on every scan)</span>
+        <label class="inline">Propose a feed from
+          <input type="number" id="min-hit-rate" min="0" max="100" step="1" />
+        </label>
+        <span class="muted small">% of headlines on topic</span>
         <button type="button" class="btn ok" id="btn-save-recheck">Save</button>
       </div>
       <p class="muted small" id="history-meta"></p>

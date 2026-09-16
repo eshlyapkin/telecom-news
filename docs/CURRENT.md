@@ -69,6 +69,27 @@ rules, discovery topics and re-check period, one-off pipeline runs.
 
 ---
 
+## Session 2026-09-16 (settings): the proposal threshold is the operator's
+
+`MIN_HIT_RATE = 0.25` was a constant, and `tcpaworld.com` — US court and FCC
+rulings on text marketing, the one genuinely useful outlet found in a sweep of
+eighteen — scores 21%. The threshold now sits in `data/discovery_settings.json`
+next to the re-check period, editable in the Discovery tab and with
+`discover --set-min-hit-rate`; `--min-hit-rate` overrides one scan without
+storing anything. Set to **0.20** for this operator.
+
+`save_settings` takes both fields independently and writes whatever it was not
+given unchanged — the partial-write lesson from the AI-rules editor, applied
+before it could cost anything.
+
+The new test proves both directions: a feed one headline in six on topic is
+refused at the default and proposed at 0.1. Lowering the threshold is not free —
+at 0.1 the near misses in this operator's history were `theguardian.com`,
+`appuals.com` and a comments feed, which is why the runbook now says to read
+`--history` first and accept by hand.
+
+`pytest -q` → **436 passed**.
+
 ## Session 2026-09-16 (policy): the model did not know what TCPA is
 
 `tcpaworld.com` was added as a source (21% on topic, 7/33). Its first eight
