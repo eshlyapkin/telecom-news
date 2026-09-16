@@ -950,3 +950,46 @@ def test_gui_offers_the_period_and_the_next_check_column(client) -> None:
     assert "next check" in html
     assert 'id="recheck-days"' in html
     assert "0 = probe every site on every scan" in html
+
+
+def test_a_broken_content_encoding_costs_one_host_not_the_whole_scan(tmp_path: Path) -> None:
+    """One malformed gzip/deflate answer used to end the pass for every host.
+
+    DecodingError is not a TransportError, so it escaped fetch_url and the
+    per-site CollectorError handler alike; the panel reported "Scan failed" and
+    the remaining seeds were never probed.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "broken.example" in url:
+            return httpx.Response(
+                200, headers={"Content-Encoding": "deflate"}, content=b"<html>plain</html>"
+            )
+        if url.endswith("/feed/") and "good.example" in url:
+            return httpx.Response(200, content=MESSAGING_FEED.encode("utf-8"))
+        if url.rstrip("/").endswith("example"):
+            return httpx.Response(200, text="<html><head></head><body>site</body></html>")
+        return httpx.Response(404, text="nope")
+
+    db = _seeded_db(
+        tmp_path,
+        {
+            1: ["https://broken.example/1", "https://good.example/1"],
+            2: ["https://broken.example/2", "https://good.example/2"],
+        },
+    )
+    result = discovery.scan(
+        db=db,
+        data_dir=tmp_path,
+        max_sites=5,
+        use_search=False,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert result["checked_sites"] == 2  # the broken host did not stop the pass
+    assert result["new_candidates"] == 1
+    (candidate,) = discovery.list_candidates(tmp_path)["candidates"]
+    assert candidate["feed_url"] == "https://good.example/feed/"
+    checked = json.loads((tmp_path / "source_candidates.json").read_text(encoding="utf-8"))
+    assert checked["checked"]["broken.example"]["outcome"] == "unreachable"

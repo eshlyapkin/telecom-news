@@ -69,6 +69,41 @@ rules, discovery topics and re-check period, one-off pipeline runs.
 
 ---
 
+## Session 2026-09-16: one bad Content-Encoding stopped every scan
+
+The operator reported `Scan failed: DecodingError: Error -3 while decompressing
+data: incorrect header check` from the Discovery panel. `httpx.DecodingError` is
+a `RequestError` but **not** a `TransportError`, and `fetch_url` only wrapped
+`HTTPStatusError`, `TimeoutException` and `TransportError`. So a site whose body
+contradicts its own `Content-Encoding` raised straight past `CollectorError`,
+past the per-site `except CollectorError` in `scan`, and ended the whole pass —
+the remaining seeds were never probed. Reproduced on a mock, then covered by two
+tests that both fail without the fix.
+
+`fetch_url` now wraps every `RequestError` and does not retry one (a body that
+will not decompress will not decompress twice). The scan additionally guards the
+feed listing and the sitemap probe per host, so an unanticipated error costs one
+host instead of the pass.
+
+**Measured while investigating** (nothing in `data/` was changed to do it):
+
+- Of 1108 skipped articles, **492** never reached the model: the keyword gate
+  rejected them. 401 were the model's own verdicts.
+- 150 of the gate-rejected articles, re-run through the live policy with
+  `use_gate=False`: **2 relevant (1.3%, Wilson 95% CI 0.4–4.7%)** — about one
+  article a day, for roughly 75 extra LM Studio calls a day.
+- **215 articles from 2026-09-11 sit `skipped` with `llm_result` NULL** — the
+  catalog-import day, 26 sources, ~10 each. No current code path does that
+  (`cli.py` always stores a verdict), so it is a leftover of the version of the
+  day. Among them id=202 `MWC26: RCS is the tortoise in the rich messaging race`
+  from `mobilesquared`, which never reached the model at all.
+- Industry events fall through three gaps at once: no event term in
+  `messaging_terms`, no event section in the operator's policy, no event query in
+  `discovery_queries.json`. `Wholesale World Congress` died on the keyword gate;
+  `World Communication Awards shortlist announced!` on the policy.
+
+`pytest -q` → **432 passed**.
+
 ## Session 2026-09-13 (M12): documentation brought back to the repository
 
 See D-030. The documentation had drifted far enough to mislead: `PROJECT_STATE.md`

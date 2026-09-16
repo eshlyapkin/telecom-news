@@ -115,6 +115,14 @@ def fetch_url(
                 raise CollectorError(
                     f"GET {url} failed after {max_retries} attempts: {exc}"
                 ) from exc
+        except httpx.RequestError as exc:
+            # DecodingError and the other RequestError kinds are NOT
+            # TransportError subclasses, so they used to escape this wrapper
+            # entirely: a single site answering with a Content-Encoding its body
+            # does not honour ("Error -3 while decompressing data") aborted a
+            # whole discovery scan instead of costing one skipped host. Retrying
+            # cannot fix a body that will not decompress, so this fails at once.
+            raise CollectorError(f"GET {url} failed: {exc.__class__.__name__}: {exc}") from exc
         if attempt < max_retries:
             time.sleep(backoff_base * 2 ** (attempt - 1))
     # Only reachable with max_retries < 1; kept as a defensive guard.

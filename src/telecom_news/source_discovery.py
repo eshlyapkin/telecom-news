@@ -842,11 +842,19 @@ def scan(
         failed_probes = 0
         proposed = False
 
-        feed_urls = (
-            feed_urls_for_site(site_url, client=client)
-            if look_for in (LOOK_FOR_RSS, LOOK_FOR_BOTH)
-            else []
-        )
+        # Defence in depth: probing is network work against arbitrary hosts, and
+        # an unexpected error on one of them must cost that host, not the scan.
+        # fetch_url already turns HTTP failures into CollectorError; this is the
+        # guard for everything nobody anticipated.
+        try:
+            feed_urls = (
+                feed_urls_for_site(site_url, client=client)
+                if look_for in (LOOK_FOR_RSS, LOOK_FOR_BOTH)
+                else []
+            )
+        except Exception:  # noqa: BLE001 — one bad host must not end the scan
+            logger.warning("discovery: listing feeds of %s failed", host, exc_info=True)
+            feed_urls = []
         if feed_urls or look_for == LOOK_FOR_SITEMAP:
             outcome = "nothing_found"
         for feed_url in feed_urls:
@@ -907,7 +915,11 @@ def scan(
             # No usable feed — including the case where every guess was refused,
             # which is exactly when an outlet is worth checking for a sitemap.
             # collect can read a dated news sitemap as a source of its own (D-026).
-            verdict = evaluate_sitemap(site_url, client=client)
+            try:
+                verdict = evaluate_sitemap(site_url, client=client)
+            except Exception:  # noqa: BLE001 — same reason as the feed probe above
+                logger.warning("discovery: sitemap probe of %s failed", host, exc_info=True)
+                verdict = None
             sitemap_url = str(verdict["feed_url"]) if verdict else ""
             if (
                 verdict

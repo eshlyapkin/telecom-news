@@ -212,3 +212,30 @@ def test_parse_feed_reports_a_broken_feed_instead_of_an_empty_one() -> None:
     )
     with pytest.raises(CollectorError):
         parse_feed(broken, "broken")
+
+
+def test_fetch_url_wraps_a_broken_content_encoding() -> None:
+    """A body that contradicts its Content-Encoding is one skipped URL, not a crash.
+
+    httpx raises DecodingError, which is a RequestError but NOT a
+    TransportError, so it used to travel past fetch_url untouched and abort a
+    whole discovery scan ("Scan failed: DecodingError: Error -3 while
+    decompressing data: incorrect header check").
+    """
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(
+            200, headers={"Content-Encoding": "deflate"}, content=b"<rss>not compressed</rss>"
+        )
+
+    with pytest.raises(CollectorError, match="DecodingError"):
+        fetch_url(
+            "https://example.com/feed/",
+            max_retries=3,
+            backoff_base=0,
+            client=_mock_client(handler),
+        )
+    # Nothing about a body that will not decompress improves on a second try.
+    assert calls["n"] == 1
