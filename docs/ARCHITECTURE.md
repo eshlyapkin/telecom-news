@@ -69,7 +69,7 @@
 | `fetched_at` | момент сбора, UTC |
 | `status` | `new → processed → published` (+ `skipped`, `error`) |
 | `relevance` | `relevant` / `irrelevant` (результат LLM) |
-| `category` | тип новости: technology / vendor / aggregator / carrier / product_service / partnership / ma_investment / security_antifraud / regulation |
+| `category` | тип новости: technology / network_protocol / vendor / aggregator / carrier / product_service / partnership / ma_investment / security_antifraud / regulation / event |
 | `llm_result` | JSON-структура результата LLM (summary, перевод и т.д.) |
 | `published_at` | момент публикации в Telegram |
 
@@ -96,7 +96,7 @@
 - **Вход:** `Article` (title + текст, язык).
 - **Выход:** `{relevant: bool, category: str|None}` — часть `llm_result`.
 - **Зависимости:** LLM client (3.8).
-- **Ответственность:** промпт с явным критерием «только SMS/messaging-экосистема; общие телеком-новости без связи с SMS → irrelevant»; категории: technology, vendor, aggregator, carrier, product_service, partnership, ma_investment, security_antifraud, regulation.
+- **Ответственность:** промпт с явным критерием «только SMS/messaging-экосистема; общие телеком-новости без связи с SMS → irrelevant»; категории: technology, network_protocol, vendor, aggregator, carrier, product_service, partnership, ma_investment, security_antifraud, regulation, event.
 - **НЕ делает:** суммаризацию и перевод (отдельные шаги 3.9); не публикует.
 
 ### 3.8 LLM Integration — LM Studio (`llm/client.py`)

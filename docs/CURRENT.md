@@ -69,6 +69,46 @@ rules, discovery topics and re-check period, one-off pipeline runs.
 
 ---
 
+## Session 2026-09-16 (later): the 403 retry that never ran, and what the queue holds
+
+**The browser User-Agent retry was dead code for discovery.** `fetch_url` reacts
+to 403/406 by switching to `BROWSER_USER_AGENT` and `continue`-ing — but that
+spends an attempt, and discovery probes with `max_retries=1`. The loop was
+already on its last attempt, so the retry never happened and every publisher
+behind a plain User-Agent filter was recorded `unreachable`. `collect`, which
+retries three times, read the same feeds without trouble, so nothing looked
+broken. The retry budget now grows by one when the agent changes (it can change
+only once). Verified live: `mobileworldlive.com/feed/` with `max_retries=1`
+returned 403 before the fix and 129 941 bytes after it.
+
+**A new category, `event`.** With the events section in force the model answered
+`"event"` for a GSMA business-messaging workshop and the verdict lost its
+category — the same failure `network_protocol` was split out to fix (the
+category is printed in the channel post, so a null one is visible to readers).
+The operator policy also turned out to be **truncated mid-sentence** at
+`"aggregator"\nNews primarily about SMS aggregators, messaging hubs, whol` — six
+category definitions were missing and the model had been guessing them. The tail
+was reconstructed; ROADMAP/ARCHITECTURE/TECHNICAL_SPEC still listed the set from
+before `network_protocol` and now match the code.
+
+**What the requeued backlog actually was.** All 215 were classified: 113 came
+back relevant, but 105 of those are evergreen vendor-blog SEO ("SMS Marketing
+Plan: How to Build a Text Marketing Strategy", "Top 10 Braze Competitors"). Only
+`mobilesquared` (8) is industry analysis. Nothing was published — the operator
+chose to mark them `skipped` rather than post 2018–2026 material as news.
+
+**Where the channel's volume really comes from.** Of 57 published items, 37 are
+vendor blogs (twilio 14, sinch 10, slicktext 5, dotdigital 4); only 17 of the 54
+sources that ever produced an article have published one. The trade press is
+thin and largely unreachable: `capacitymedia.com`, `telecoms.com`,
+`mobileecosystemforum.com`, `commsbusiness.co.uk` and
+`mobilemarketingmagazine.com` answer 403 to a full browser header set, and
+`lightreading.com`, `developingtelecoms.com`, `telecomreviewafrica.com` score 0%
+by headline. The one clear find is **`tcpaworld.com` — 21% (7/33)**, US
+regulation of text messaging; still under the 0.25 default threshold.
+
+`pytest -q` → **433 passed**.
+
 ## Session 2026-09-16: one bad Content-Encoding stopped every scan
 
 The operator reported `Scan failed: DecodingError: Error -3 while decompressing

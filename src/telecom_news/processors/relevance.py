@@ -33,6 +33,11 @@ CATEGORIES = (
     "ma_investment",
     "security_antifraud",
     "regulation",
+    # Industry events, conferences and awards. Added with the events section of
+    # the operator policy (2026-09-16): the model answered "event" for a GSMA
+    # business-messaging workshop and the verdict lost its category, the same
+    # failure that network_protocol was split out to fix.
+    "event",
 )
 
 MAX_INPUT_CHARS = 4000

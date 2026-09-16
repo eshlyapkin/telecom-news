@@ -104,7 +104,7 @@ The third milestone focuses on integrating a local LLM for relevance filtering, 
 - Implement an LM Studio HTTP client (`src/telecom_news/llm/client.py`).
 - Provide a `LLMUnavailableError` exception.
 - Add relevance filtering for SMS/messaging‑related news.
-- Classify article type (technology, vendor, aggregator, carrier, product_service, partnership, ma_investment, security_antifraud, regulation).
+- Classify article type (technology, network_protocol, vendor, aggregator, carrier, product_service, partnership, ma_investment, security_antifraud, regulation, event).
 - Summarize content in the target language; if source language differs, translate via the LLM.
 - Store the raw LLM JSON response in the database (`llm_result` column).
 - Ensure the pipeline does not crash if the LLM is unavailable.

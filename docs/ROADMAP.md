@@ -133,7 +133,7 @@
 **Входит:**
 - `llm/client.py`: HTTP-клиент LM Studio (OpenAI-совместимый endpoint, по умолчанию `http://localhost:1234/v1`), таймауты, retry, `LLMUnavailableError`
 - Проверка релевантности **SMS/messaging-тематике** (общие телеком-новости без связи с SMS → irrelevant)
-- Классификация типа новости: technology / vendor / aggregator / carrier / product_service / partnership / ma_investment / security_antifraud / regulation
+- Классификация типа новости: technology / network_protocol / vendor / aggregator / carrier / product_service / partnership / ma_investment / security_antifraud / regulation / event
 - Summarization; обработка RU и EN; перевод при необходимости (язык источника ≠ целевой язык канала)
 - Структурированный результат (`llm_result` JSON); нерелевантные статьи → `skipped`
 - Обработка ошибки/недоступности LM Studio: pipeline не падает, статья остаётся для повторной обработки

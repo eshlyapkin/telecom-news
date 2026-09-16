@@ -239,3 +239,31 @@ def test_fetch_url_wraps_a_broken_content_encoding() -> None:
         )
     # Nothing about a body that will not decompress improves on a second try.
     assert calls["n"] == 1
+
+
+def test_the_browser_user_agent_retry_does_not_spend_the_retry_budget() -> None:
+    """Discovery probes with max_retries=1, and the 403 retry never happened.
+
+    The switch to the browser User-Agent used ``continue``, so on a one-attempt
+    call the loop simply ended: every publisher that answers 403 to the project
+    agent — mobileworldlive.com among them — looked unreachable to discovery
+    while collect, which retries three times, read the same feed happily.
+    """
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        agent = request.headers.get("user-agent", "")
+        seen.append(agent)
+        if agent == USER_AGENT:
+            return httpx.Response(403, text="blocked")
+        return httpx.Response(200, text="<rss version='2.0'><channel/></rss>")
+
+    body = fetch_url(
+        "https://example.com/feed/",
+        max_retries=1,
+        backoff_base=0,
+        client=_mock_client(handler),
+    )
+
+    assert body.startswith(b"<rss")
+    assert seen == [USER_AGENT, BROWSER_USER_AGENT]

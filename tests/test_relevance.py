@@ -129,6 +129,7 @@ def test_all_roadmap_categories_are_known() -> None:
         "ma_investment",
         "security_antifraud",
         "regulation",
+        "event",
     }
 
 

@@ -71,7 +71,17 @@ def fetch_url(
     """
     last_error: Exception | None = None
     user_agent = USER_AGENT
-    for attempt in range(1, max_retries + 1):
+    # Switching to the browser User-Agent must not spend a retry. Discovery
+    # probes with max_retries=1, so the "retry as a browser" below never ran
+    # there: the loop was already on its last attempt when the switch happened,
+    # and every publisher behind a plain User-Agent filter looked unreachable.
+    # mobileworldlive.com is the case that surfaced it — 403 to the probe, 200
+    # and a full feed to a browser. The budget therefore grows by one when the
+    # agent changes, which can happen only once.
+    budget = max_retries
+    attempt = 0
+    while attempt < budget:
+        attempt += 1
         try:
             if client is None:
                 with httpx.Client(timeout=timeout, follow_redirects=True) as owned:
@@ -90,31 +100,30 @@ def fetch_url(
                     status,
                 )
                 user_agent = BROWSER_USER_AGENT
+                budget += 1
                 continue
-            if 500 <= status < 600 and attempt < max_retries:
+            if 500 <= status < 600 and attempt < budget:
                 logger.warning(
                     "GET %s -> HTTP %s (attempt %d/%d), retrying",
                     url,
                     status,
                     attempt,
-                    max_retries,
+                    budget,
                 )
             else:
                 raise CollectorError(f"GET {url} failed with HTTP {status}") from exc
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc
-            if attempt < max_retries:
+            if attempt < budget:
                 logger.warning(
                     "GET %s failed (%s, attempt %d/%d), retrying",
                     url,
                     exc.__class__.__name__,
                     attempt,
-                    max_retries,
+                    budget,
                 )
             else:
-                raise CollectorError(
-                    f"GET {url} failed after {max_retries} attempts: {exc}"
-                ) from exc
+                raise CollectorError(f"GET {url} failed after {attempt} attempts: {exc}") from exc
         except httpx.RequestError as exc:
             # DecodingError and the other RequestError kinds are NOT
             # TransportError subclasses, so they used to escape this wrapper
@@ -123,7 +132,7 @@ def fetch_url(
             # whole discovery scan instead of costing one skipped host. Retrying
             # cannot fix a body that will not decompress, so this fails at once.
             raise CollectorError(f"GET {url} failed: {exc.__class__.__name__}: {exc}") from exc
-        if attempt < max_retries:
+        if attempt < budget:
             time.sleep(backoff_base * 2 ** (attempt - 1))
     # Only reachable with max_retries < 1; kept as a defensive guard.
-    raise CollectorError(f"GET {url} failed after {max_retries} attempts: {last_error}")
+    raise CollectorError(f"GET {url} failed after {attempt} attempts: {last_error}")
