@@ -969,6 +969,35 @@ def _cmd_process(
     return 0
 
 
+# Order the evergreen lane works through its queue. The channel exists for
+# reference material first (operator, 2026-09-17): protocol and architecture
+# walkthroughs ahead of everything, regulation last — it is the class the
+# operator ranks lowest. Collection order would have posted six legal articles
+# before the first technical one purely because they were fetched a day earlier.
+# A category the list does not name sorts after all of them.
+EVERGREEN_CATEGORY_ORDER: tuple[str, ...] = (
+    "network_protocol",
+    "technology",
+    "event",
+    "aggregator",
+    "carrier",
+    "vendor",
+    "ma_investment",
+    "partnership",
+    "security_antifraud",
+    "product_service",
+    "regulation",
+)
+
+
+def evergreen_rank(category: str | None) -> int:
+    """Position of ``category`` in the evergreen queue; unknown sorts last."""
+    try:
+        return EVERGREEN_CATEGORY_ORDER.index(str(category))
+    except ValueError:
+        return len(EVERGREEN_CATEGORY_ORDER)
+
+
 def _cmd_publish(
     limit: int | None,
     dry_run: bool,
@@ -1050,7 +1079,10 @@ def _cmd_publish(
     if since is not None and config.publish_backlog_per_day > 0:
         moment = datetime.now(timezone.utc)
         recent = db.backlog_posts_since(since=moment - timedelta(hours=24), window_hours=window)
-        waiting = db.stale_articles(status="processed", cutoff=since)
+        waiting = sorted(
+            db.stale_articles(status="processed", cutoff=since),
+            key=lambda item: (evergreen_rank(item.category), item.id or 0),
+        )
         quota = int(config.publish_backlog_per_day)
         gap = timedelta(hours=float(config.publish_backlog_min_gap_hours))
         if not waiting:

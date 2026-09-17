@@ -407,3 +407,33 @@ def test_the_archive_note_says_when_the_cap_went_to_fresh_news(
     out = capsys.readouterr().out
     assert "this cycle's cap went to fresh news" in out
     assert "posting 1 of" not in out
+
+
+def test_the_evergreen_lane_posts_technical_material_first(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Collection order would have put six legal articles ahead of the first
+    protocol walkthrough, purely because they were fetched a day earlier."""
+    from telecom_news.cli import evergreen_rank
+
+    assert evergreen_rank("network_protocol") < evergreen_rank("regulation")
+    assert evergreen_rank(None) > evergreen_rank("regulation")
+
+    path = tmp_path / "news.db"
+    _seed_many(path, 2, hours_ago=200.0)  # ids 1..2, category "vendor"
+    db = Database(path)
+    for article_id, category in ((1, "regulation"), (2, "network_protocol")):
+        db.save_processing_result(
+            article_id,
+            relevance="relevant",
+            category=category,
+            # Keep the seeded summary: publish reads it to build the post.
+            llm_result={"summary": f"Summary {article_id}", "summary_language": "ru"},
+            status="processed",
+        )
+    sent = _fake_client(monkeypatch)
+
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert len(sent) == 1
+    assert "Title 2" in sent[0][1]  # the walkthrough, not the older legal row
