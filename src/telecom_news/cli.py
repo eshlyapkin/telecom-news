@@ -1037,6 +1037,40 @@ def _cmd_publish(
     since = datetime.now(timezone.utc) - timedelta(hours=window) if window > 0 else None
     candidates = db.recent_articles(statuses=("processed", "published"), since=since)
     held_back = db.count_stale(status="processed", cutoff=since) if since is not None else 0
+    # Evergreen lane. Reference material — protocol walkthroughs, architecture
+    # guides — is worth posting whatever its date, but it is not news and a
+    # channel cannot take an archive as one burst. So it drips: at most
+    # publish_backlog_per_day a day, never two posts closer together than
+    # publish_backlog_min_gap_hours. One article per cycle is all that is needed
+    # — the scheduler runs every 15 minutes, so the gap does the spacing — and it
+    # is appended after the fresh candidates, which keeps news ahead of archive.
+    backlog_note = ""
+    if since is not None and config.publish_backlog_per_day > 0:
+        moment = datetime.now(timezone.utc)
+        recent = db.backlog_posts_since(since=moment - timedelta(hours=24), window_hours=window)
+        waiting = db.stale_articles(status="processed", cutoff=since)
+        quota = int(config.publish_backlog_per_day)
+        gap = timedelta(hours=float(config.publish_backlog_min_gap_hours))
+        if not waiting:
+            pass
+        elif len(recent) >= quota:
+            backlog_note = (
+                f"Archive: {len(waiting)} item(s) waiting; today's limit is reached "
+                f"({len(recent)}/{quota}, PUBLISH_BACKLOG_PER_DAY)."
+            )
+        elif recent and moment - recent[0] < gap:
+            due = (recent[0] + gap).isoformat(timespec="minutes")
+            backlog_note = (
+                f"Archive: {len(waiting)} item(s) waiting; the next one is due after {due} "
+                f"(PUBLISH_BACKLOG_MIN_GAP_HOURS={config.publish_backlog_min_gap_hours:g})."
+            )
+        else:
+            candidates = [*candidates, waiting[0]]
+            held_back = max(0, held_back - 1)
+            backlog_note = (
+                f"Archive: posting 1 of {len(waiting)} waiting item(s) "
+                f"({len(recent) + 1}/{quota} today)."
+            )
     sent = db.sent_deliveries()
     tracked_articles = {article_id for _chat_id, article_id, _lang in sent}
     client = (
@@ -1147,6 +1181,8 @@ def _cmd_publish(
             f"{held_back} processed article(s) are older than {window:g} h and stay unpublished "
             "(PUBLISH_MAX_AGE_HOURS=0 or 'publish --max-age-hours 0' posts them anyway)."
         )
+    if backlog_note:
+        print(backlog_note)
     if max_posts and previewed >= max_posts:
         print(f"Cap reached: at most {max_posts} article(s) per cycle (PUBLISH_MAX_PER_CYCLE).")
     if dry_run:

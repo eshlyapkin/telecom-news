@@ -69,6 +69,56 @@ rules, discovery topics and re-check period, one-off pipeline runs.
 
 ---
 
+## Session 2026-09-17: what the channel is actually for
+
+The operator named the point of the project, and it is not what the channel had
+been publishing. What they want: **technical reference material** — an IP-SM-GW
+transport-level interworking walkthrough, how mobile generations work (MIMO,
+LTE frequencies), vendor architecture guides. What they want least: SMS-marketing
+advice ("How to build a winning Black Friday strategy") and legal news. The
+channel was 37 of 57 posts from vendor marketing blogs, and yesterday's TCPA work
+had pushed it further the wrong way.
+
+**Policy.** Two sections, both operator-approved. **13. Technical explainers and
+reference material** makes protocol walkthroughs, architecture guides, network
+generations and migration explanations relevant, states plainly that **age does
+not matter for this class**, and draws the line: explaining how something works
+is relevant, reporting what a company did with it is not. The IRRELEVANT section
+gained **marketing content is not news** — how-to guides, "top 10" round-ups,
+seasonal campaign advice, templates, webinar promotion — irrelevant *even when
+entirely about SMS*. Verified against live rows: the Sinch Black Friday post is
+now rejected as "marketing/advice content, not reporting news", while a Sinch
+post about 10DLC registration requirements still passes, which is the intended
+boundary.
+
+**A source that was never connected.** `realtimecommunication.wordpress.com`
+publishes exactly this material and was invisible: the site was never probed, and
+`IP-SM-GW` appeared in none of the 1300+ collected articles. Its sitemap carries
+105 dated entries back to 2015, so it went in as a sitemap source. `collect`
+fetches at most `MAX_TITLE_FETCHES` (15) pages per run — right for a news watch,
+wrong for pulling an archive once — so the backfill ran through a one-off script
+with the caps raised. 105 entries, 90 new, **16 relevant**: `SMS in 2G/3G`,
+`IP-SM-GW Transport Level Interworking`, `SMSC – 30 years later`,
+`Diameter Overview`, `SCTP Introduction`, `IMS from 10.000 feet`, `VoIMS – IMS
+and 5G`, `Messaging in RCS`, `Roaming in IMS`, `Rx Interface`, `SIP Illustrated`
+3 and 4. Half `network_protocol`, half `technology`.
+
+**Two limits found while doing it.** Sitemap page titles kept their HTML
+entities — `SMSC &#8211; 30 years later` reached the classifier prompt and would
+have reached the channel; `page_metadata` now unescapes, and the 35 stored rows
+were repaired. And the two sites the operator also asked about cannot be read at
+all: `marketnet.ua` publishes no feed and its sitemap times out, while
+`docs.rhino.alianza.com` has no feed, no sitemap and no robots.txt. Documentation
+is not a news source; watching it would be a different mechanism.
+
+**The evergreen lane** (D-031) answers what to do with 16 articles from 2015–2024
+that a 48-hour window will never pass: they drip, at most
+`PUBLISH_BACKLOG_PER_DAY` (6) a day and never closer than
+`PUBLISH_BACKLOG_MIN_GAP_HOURS` (2) apart, one per cycle, after the fresh
+candidates so news keeps the cap.
+
+`pytest -q` → **441 passed**.
+
 ## Session 2026-09-16 (settings): the proposal threshold is the operator's
 
 `MIN_HIT_RATE = 0.25` was a constant, and `tcpaworld.com` — US court and FCC

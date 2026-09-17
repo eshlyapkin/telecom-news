@@ -46,6 +46,14 @@ class Config:
     # publishes processed articles however old they are.
     publish_max_per_cycle: int = 10
     publish_max_age_hours: float = 48.0
+    # Evergreen lane. Reference material — protocol walkthroughs, architecture
+    # guides — is worth posting whatever its date, but it is not news and must
+    # not arrive as a burst: an archive is dripped at most
+    # `publish_backlog_per_day` a day, never two posts closer together than
+    # `publish_backlog_min_gap_hours`. 0 a day switches the lane off, which is
+    # the behaviour that existed before: old articles simply stay unpublished.
+    publish_backlog_per_day: int = 6
+    publish_backlog_min_gap_hours: float = 2.0
     # Articles older than this are not stored by collect/run: dormant feeds must
     # not push year-old news into the channel (D-017). 0 disables the guard.
     article_max_age_days: int = 30
@@ -116,6 +124,8 @@ class Config:
             ("SUBSCRIBER_MAX_ATTEMPTS", "subscriber_max_attempts", int),
             ("PUBLISH_MAX_PER_CYCLE", "publish_max_per_cycle", int),
             ("PUBLISH_MAX_AGE_HOURS", "publish_max_age_hours", float),
+            ("PUBLISH_BACKLOG_PER_DAY", "publish_backlog_per_day", int),
+            ("PUBLISH_BACKLOG_MIN_GAP_HOURS", "publish_backlog_min_gap_hours", float),
         ):
             value = os.environ.get(env_name)
             if value:

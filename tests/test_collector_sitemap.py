@@ -229,3 +229,17 @@ def test_page_metadata_prefers_open_graph_then_the_title_tag() -> None:
         "",
     )
     assert page_metadata("<html></html>") == ("", "")
+
+
+def test_page_metadata_resolves_html_entities() -> None:
+    """Raw markup titles reached the prompt and the channel as "&#8211;"."""
+    from telecom_news.collectors.sitemap import page_metadata
+
+    markup = (
+        '<html><head><meta property="og:title" content="SMSC &#8211; 30 years later">'
+        '<meta name="description" content="Someone&#8217;s watching"></head></html>'
+    )
+    title, description = page_metadata(markup)
+
+    assert title == "SMSC – 30 years later"
+    assert description == "Someone’s watching"

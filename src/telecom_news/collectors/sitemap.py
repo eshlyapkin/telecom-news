@@ -23,6 +23,7 @@ is the page's declared metadata, not per-site scraping.
 from __future__ import annotations
 
 import gzip
+import html as html_entities
 import logging
 import re
 from dataclasses import dataclass, field
@@ -227,13 +228,19 @@ def _meta_content(html: str, keys: tuple[str, ...]) -> str:
 
 
 def page_metadata(html: str) -> tuple[str, str]:
-    """``(title, description)`` a page declares about itself."""
+    """``(title, description)`` a page declares about itself.
+
+    Entities are resolved: a title read straight out of the markup carries
+    ``&#8211;`` and ``&#8217;`` where the page shows an en dash and an
+    apostrophe, and that text goes on to the classifier prompt and the channel
+    post ("SMSC &#8211; 30 years later").
+    """
     title = _meta_content(html, ("og:title", "twitter:title"))
     if not title:
         match = _TITLE_RE.search(html)
         title = _TAG_RE.sub(" ", match.group(1)).strip() if match else ""
     description = _meta_content(html, ("og:description", "description", "twitter:description"))
-    return title, description
+    return html_entities.unescape(title).strip(), html_entities.unescape(description).strip()
 
 
 @dataclass

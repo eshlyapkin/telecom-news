@@ -290,6 +290,7 @@ serve и `scripts/run_pipeline.sh`; это `EnvironmentFile`, поэтому с�
 | `TELECOM_NEWS_DISABLED_SOURCES` | кил-свитч источников (D-017) |
 | `TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS` | порог свежести на входе (D-017) |
 | `PUBLISH_MAX_PER_CYCLE`, `PUBLISH_MAX_AGE_HOURS` | лимиты публикации (D-020) |
+| `PUBLISH_BACKLOG_PER_DAY`, `PUBLISH_BACKLOG_MIN_GAP_HOURS` | темп публикации вечнозелёного материала (D-031) |
 | `SUBSCRIBER_MAX_PER_CYCLE`, `SUBSCRIBER_MAX_AGE_HOURS`, `SUBSCRIBER_MAX_ATTEMPTS` | лимиты рассылки (D-020) |
 | `LOG_LEVEL`, `TELEGRAM_MIN_INTERVAL` | прочее |
 

@@ -207,6 +207,30 @@ def _seed_many(path: Path, count: int, *, hours_ago: float = 1.0) -> None:
         db.set_status(n, "processed")
 
 
+def _seed_fresh_after(path: Path, count: int, *, hours_ago: float = 1.0) -> None:
+    """Fresh rows with ids after the stale ones, so order alone cannot pass a test."""
+    from datetime import datetime, timedelta, timezone
+
+    db = Database(path)
+    moment = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    for n in range(1, count + 1):
+        article_id, _ = db.upsert_by_hash(
+            Article(
+                url=f"https://fresh.example/{n}",
+                source_id="test",
+                title=f"Fresh {n}",
+                body="body",
+                category="vendor",
+                content_hash=f"fresh-{n:04d}",
+                published_at=moment,
+                fetched_at=moment,
+                llm_result={"summary": f"Fresh summary {n}", "summary_language": "ru"},
+                status="processed",
+            )
+        )
+        db.set_status(article_id, "processed")
+
+
 def _fake_client(monkeypatch) -> list[tuple[str, str]]:
     sent: list[tuple[str, str]] = []
 
@@ -255,10 +279,11 @@ def test_publish_cap_zero_means_no_cap(tmp_path: Path, monkeypatch) -> None:
 def test_publish_holds_back_articles_older_than_the_window(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    """Processed rows from a stale backlog are not posted as fresh news."""
+    """With the evergreen lane off, a stale backlog is not posted at all (D-020)."""
     path = tmp_path / "news.db"
     _seed_many(path, 2, hours_ago=200.0)
     sent = _fake_client(monkeypatch)
+    monkeypatch.setenv("PUBLISH_BACKLOG_PER_DAY", "0")
 
     assert _cmd_publish(None, False, db_path=path) == 0
 
@@ -266,6 +291,65 @@ def test_publish_holds_back_articles_older_than_the_window(
     out = capsys.readouterr().out
     assert "2 processed article(s) are older than 48 h and stay unpublished" in out
     assert Database(path).count_by_status()["processed"] == 2
+
+
+def test_the_evergreen_lane_posts_one_old_article_per_cycle(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Reference material is worth posting at any age, but never as a burst."""
+    path = tmp_path / "news.db"
+    _seed_many(path, 5, hours_ago=200.0)
+    sent = _fake_client(monkeypatch)
+
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert len(sent) == 1  # one per cycle, not the whole archive
+    out = capsys.readouterr().out
+    assert "Archive: posting 1 of 5 waiting item(s) (1/6 today)." in out
+    assert Database(path).count_by_status()["processed"] == 4
+
+
+def test_the_evergreen_lane_waits_for_the_gap(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A second cycle minutes later must not post again."""
+    path = tmp_path / "news.db"
+    _seed_many(path, 5, hours_ago=200.0)
+    sent = _fake_client(monkeypatch)
+
+    assert _cmd_publish(None, False, db_path=path) == 0
+    capsys.readouterr()
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert len(sent) == 1
+    assert "the next one is due after" in capsys.readouterr().out
+
+
+def test_the_evergreen_lane_stops_at_the_daily_quota(tmp_path: Path, monkeypatch, capsys) -> None:
+    path = tmp_path / "news.db"
+    _seed_many(path, 5, hours_ago=200.0)
+    sent = _fake_client(monkeypatch)
+    monkeypatch.setenv("PUBLISH_BACKLOG_PER_DAY", "1")
+    monkeypatch.setenv("PUBLISH_BACKLOG_MIN_GAP_HOURS", "0")
+
+    assert _cmd_publish(None, False, db_path=path) == 0
+    capsys.readouterr()
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert len(sent) == 1
+    assert "today's limit is reached (1/1" in capsys.readouterr().out
+
+
+def test_fresh_news_goes_before_the_archive(tmp_path: Path, monkeypatch) -> None:
+    """The cap belongs to the news of the day; the archive takes what is left."""
+    path = tmp_path / "news.db"
+    _seed_many(path, 2, hours_ago=200.0)
+    _seed_fresh_after(path, 3)
+    sent = _fake_client(monkeypatch)
+    monkeypatch.setenv("PUBLISH_MAX_PER_CYCLE", "2")
+
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert len(sent) == 2
+    assert all("Fresh" in text for _chat, text in sent)
 
 
 def test_publish_window_can_be_disabled_per_run(tmp_path: Path, monkeypatch) -> None:

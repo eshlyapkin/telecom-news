@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -619,6 +619,35 @@ class Database:
                 (status, _dt_to_text(cutoff)),
             ).fetchone()
         return int(row["n"]) if row is not None else 0
+
+    def backlog_posts_since(self, *, since: datetime, window_hours: float) -> list[datetime]:
+        """When evergreen articles reached the channel since ``since``, newest first.
+
+        An article counts as evergreen here when it was already older than
+        ``window_hours`` at the moment it was posted — the drip lane for
+        reference material, as opposed to the news of the day. Deriving it from
+        the two timestamps keeps the lane out of the schema: nothing has to be
+        migrated, and a row posted before the lane existed is classified the same
+        way as one posted after.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT published_at, published_at_telegram FROM articles "
+                "WHERE status = 'published' AND published_at IS NOT NULL "
+                "AND published_at_telegram IS NOT NULL AND published_at_telegram >= ? "
+                "ORDER BY published_at_telegram DESC",
+                (_dt_to_text(_as_utc(since)),),
+            ).fetchall()
+        gap = timedelta(hours=max(0.0, float(window_hours)))
+        moments: list[datetime] = []
+        for row in rows:
+            posted = _text_to_dt(row["published_at_telegram"])
+            written = _text_to_dt(row["published_at"])
+            if posted is None or written is None:
+                continue
+            if _as_utc(posted) - _as_utc(written) > gap:
+                moments.append(_as_utc(posted))
+        return moments
 
     def stale_articles(self, *, status: str = "new", cutoff: datetime) -> list[Article]:
         """Articles in ``status`` whose own publication date is before ``cutoff``.
