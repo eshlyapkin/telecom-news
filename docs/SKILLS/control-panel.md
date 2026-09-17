@@ -19,13 +19,23 @@ curl -s http://127.0.0.1:8765/api/health      # version, languages, channel targ
 | Pause publish (project / global) | `publish` stops posting; `--dry-run` still previews | `data/projects/registry.json` |
 | Run now | one collect/process/publish/deliver cycle inside the API process | — |
 | Channel languages | one post per language; both may share one chat id | `data/channel_languages.json` |
+| Archive pace | how fast material older than the publish window drips into the channel | `data/publish_settings.json` |
 
-"Use env value" deletes the languages file, handing control back to
-`TELECOM_NEWS_TARGET_LANGS`. A language with no chat id publishes nothing at all,
+"Use env value" deletes the override file, handing control back to the
+environment — `TELECOM_NEWS_TARGET_LANGS` for the languages,
+`PUBLISH_BACKLOG_PER_DAY` / `PUBLISH_BACKLOG_MIN_GAP_HOURS` for the pace. Until
+somebody presses Apply there is no file at all and the card says so. A language with no chat id publishes nothing at all,
 and the card names it.
 
 Enabling a language does **not** strand older articles: the next `process` renders
 the missing rendition for anything still inside the publish window.
+
+**Archive pace** (D-031) is the evergreen lane: an article older than
+`PUBLISH_MAX_AGE_HOURS` is reference material worth posting whatever its date, so
+it is dripped — N a day, never two closer than Y hours, one per cycle, after the
+fresh candidates. `0` a day holds the archive back entirely, which is how the
+pipeline behaved before the lane existed. The queue is ordered by category:
+`network_protocol` and `technology` first, `regulation` last.
 
 ## Queue / Published
 

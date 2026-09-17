@@ -225,6 +225,37 @@ async function refreshLanguages() {
   }
 }
 
+async function refreshPublishSettings() {
+  try {
+    const data = await fetchJson("/api/publish-settings");
+    el("backlog-per-day").value = data.backlog_per_day;
+    el("backlog-gap-hours").value = data.backlog_min_gap_hours;
+    const owned = (data.overridden || []).length;
+    el("backlog-status").textContent = owned
+      ? `Set here; stored in ${data.path}`
+      : "Following PUBLISH_BACKLOG_PER_DAY / PUBLISH_BACKLOG_MIN_GAP_HOURS from the environment";
+  } catch (err) {
+    el("backlog-status").textContent = `Cannot read the pace: ${err.message}`;
+  }
+}
+
+async function savePublishSettings() {
+  await fetchJson("/api/publish-settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      backlog_per_day: Number(el("backlog-per-day").value),
+      backlog_min_gap_hours: Number(el("backlog-gap-hours").value),
+    }),
+  });
+  await refreshPublishSettings();
+}
+
+async function resetPublishSettings() {
+  await fetchJson("/api/publish-settings", { method: "DELETE" });
+  await refreshPublishSettings();
+}
+
 async function saveLanguages() {
   const langs = [...document.querySelectorAll(".lang-box:checked")].map((b) => b.value);
   if (!langs.length) {
@@ -309,6 +340,7 @@ async function refreshAll() {
     renderStatus(status);
     renderCards(dash);
     refreshLanguages();
+    refreshPublishSettings();
     const runBusy = status.run && status.run.status === "running";
     setHealth(
       !status.publish_effectively_paused && !runBusy,
@@ -831,6 +863,8 @@ el("btn-refresh").onclick = () => refreshAll();
 el("btn-refresh-queue").onclick = () => refreshQueue();
 el("btn-save-langs").onclick = () => saveLanguages().catch((e) => alert(e.message));
 el("btn-reset-langs").onclick = () => resetLanguages().catch((e) => alert(e.message));
+el("btn-save-backlog").onclick = () => savePublishSettings().catch((e) => alert(e.message));
+el("btn-reset-backlog").onclick = () => resetPublishSettings().catch((e) => alert(e.message));
 el("btn-refresh-published").onclick = () => refreshPublished();
 el("published-filter").oninput = () => renderPublished();
 el("btn-refresh-sources").onclick = () => refreshSources();

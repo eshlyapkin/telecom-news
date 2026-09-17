@@ -44,7 +44,8 @@ curl -s http://127.0.0.1:8765/api/health           # version, langs, channel tar
 **What the operator controls from the panel** (each writes a file in `data/`,
 picked up by the next cycle without a restart — see ARCHITECTURE §6):
 publication languages, publish pause, source add/delete/enable, AI relevance
-rules, discovery topics and re-check period, one-off pipeline runs.
+rules, discovery topics, re-check period and proposal threshold, the pace of the
+evergreen publication lane, one-off pipeline runs.
 
 **Load-bearing rules** (each cost an incident; full reasoning in DECISIONS):
 
@@ -68,6 +69,24 @@ rules, discovery topics and re-check period, one-off pipeline runs.
   current structure.
 
 ---
+
+## Session 2026-09-17 (panel): the archive pace is an operator control
+
+`PUBLISH_BACKLOG_PER_DAY` and `PUBLISH_BACKLOG_MIN_GAP_HOURS` were env-only,
+which meant editing the env file and restarting `telecom-news-serve` to change
+how fast the archive reaches the channel. They now have a card in **Overview →
+Archive pace**, stored in `data/publish_settings.json`, `GET`/`PUT`/`DELETE
+/api/publish-settings`.
+
+The override follows `channel_languages` exactly: the file wins when present,
+"Use env value" deletes it and the environment is in charge again, a field the
+file does not carry stays with the environment, and a malformed file changes
+nothing. `load_config()` reads it every time, so a change reaches the next
+15-minute cycle without restarting anything.
+
+Also in the STATE list of what the operator controls from the panel.
+
+`pytest -q` → **454 passed**.
 
 ## Session 2026-09-17: what the channel is actually for
 

@@ -104,6 +104,30 @@
             language for articles still inside the publish window.
           </p>
         </div>
+        <div class="card static">
+          <h2>Archive pace</h2>
+          <div class="actions">
+            <label class="inline">Publish
+              <input type="number" id="backlog-per-day" min="0" max="200" />
+            </label>
+            <span class="muted small">archive article(s) a day,</span>
+            <label class="inline">at least
+              <input type="number" id="backlog-gap-hours" min="0" max="168" step="0.5" />
+            </label>
+            <span class="muted small">hours apart</span>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn ok" id="btn-save-backlog">Apply</button>
+            <button type="button" class="btn" id="btn-reset-backlog">Use env value</button>
+          </div>
+          <p class="muted small" id="backlog-status"></p>
+          <p class="muted small">
+            Articles older than the publish window are reference material worth posting
+            whatever their date, so they drip instead of arriving at once — protocol and
+            architecture first, regulation last. <code>0</code> a day holds them back
+            entirely, which is what happened before this lane existed.
+          </p>
+        </div>
       </div>
       <div class="cards" id="project-cards"></div>
     </section>

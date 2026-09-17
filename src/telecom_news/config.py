@@ -133,6 +133,18 @@ class Config:
                     object.__setattr__(self, attribute, max(0, convert(float(value))))
                 except ValueError:
                     pass
+        # The panel overrides the pace of the evergreen lane the same way it
+        # overrides the channel languages: a file in data/, read on every
+        # load_config(), with the environment in charge when it is absent.
+        from .publish_settings import load_override as load_publish_override
+
+        for key, attribute in (
+            ("backlog_per_day", "publish_backlog_per_day"),
+            ("backlog_min_gap_hours", "publish_backlog_min_gap_hours"),
+        ):
+            stored = load_publish_override(self.data_dir).get(key)
+            if stored is not None:
+                object.__setattr__(self, attribute, stored)
         max_age = os.environ.get("TELECOM_NEWS_MAX_ARTICLE_AGE_DAYS")
         if max_age:
             try:

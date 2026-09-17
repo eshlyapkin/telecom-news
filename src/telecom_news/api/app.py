@@ -106,6 +106,17 @@ class DiscoverySettingsBody(BaseModel):
     min_hit_rate: float | None = Field(default=None, ge=0, le=1)
 
 
+class PublishSettingsBody(BaseModel):
+    """How fast the evergreen lane drips (D-031).
+
+    Both fields optional, same reason as the discovery settings: changing the
+    pace must not reset the daily limit by omission.
+    """
+
+    backlog_per_day: int | None = Field(default=None, ge=0, le=200)
+    backlog_min_gap_hours: float | None = Field(default=None, ge=0, le=168)
+
+
 class DiscoveryQueriesBody(BaseModel):
     """Topics the worldwide news search looks for. Empty restores the defaults."""
 
@@ -365,6 +376,36 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         """Drop the panel override; TELECOM_NEWS_TARGET_LANGS is in charge again."""
         clear_override(config.data_dir)
         return languages_for_api(config.data_dir)
+
+    @app.get("/api/publish-settings")
+    def publish_settings() -> dict[str, Any]:
+        from ..publish_settings import settings_for_api
+
+        return settings_for_api(config.data_dir)
+
+    @app.put("/api/publish-settings")
+    def set_publish_settings(body: PublishSettingsBody) -> dict[str, Any]:
+        """Change how fast archive material reaches the channel (next cycle)."""
+        from ..publish_settings import save_override, settings_for_api
+
+        try:
+            save_override(
+                data_dir=config.data_dir,
+                backlog_per_day=body.backlog_per_day,
+                backlog_min_gap_hours=body.backlog_min_gap_hours,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return settings_for_api(config.data_dir)
+
+    @app.delete("/api/publish-settings")
+    def reset_publish_settings() -> dict[str, Any]:
+        """Drop the panel override; the PUBLISH_BACKLOG_* env values win again."""
+        from ..publish_settings import clear_override as clear_publish_override
+        from ..publish_settings import settings_for_api
+
+        clear_publish_override(config.data_dir)
+        return settings_for_api(config.data_dir)
 
     @app.get("/api/source-candidates")
     def source_candidates() -> dict[str, Any]:
