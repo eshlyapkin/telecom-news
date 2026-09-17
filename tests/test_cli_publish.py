@@ -389,3 +389,21 @@ def test_publish_rejects_a_negative_window(tmp_path: Path, capsys) -> None:
     _seed_many(path, 1)
     assert _cmd_publish(None, True, db_path=path, max_age_hours=-1) == 2
     assert "--max-age-hours must be >= 0" in capsys.readouterr().err
+
+
+def test_the_archive_note_says_when_the_cap_went_to_fresh_news(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The lane appends after the fresh rows, so a full cap can crowd it out."""
+    path = tmp_path / "news.db"
+    _seed_many(path, 2, hours_ago=200.0)
+    _seed_fresh_after(path, 3)
+    sent = _fake_client(monkeypatch)
+    monkeypatch.setenv("PUBLISH_MAX_PER_CYCLE", "3")
+
+    assert _cmd_publish(None, False, db_path=path) == 0
+
+    assert len(sent) == 3
+    out = capsys.readouterr().out
+    assert "this cycle's cap went to fresh news" in out
+    assert "posting 1 of" not in out

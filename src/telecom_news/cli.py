@@ -1045,6 +1045,8 @@ def _cmd_publish(
     # — the scheduler runs every 15 minutes, so the gap does the spacing — and it
     # is appended after the fresh candidates, which keeps news ahead of archive.
     backlog_note = ""
+    backlog_candidate: int | None = None
+    backlog_waiting = backlog_today = backlog_quota = 0
     if since is not None and config.publish_backlog_per_day > 0:
         moment = datetime.now(timezone.utc)
         recent = db.backlog_posts_since(since=moment - timedelta(hours=24), window_hours=window)
@@ -1066,11 +1068,10 @@ def _cmd_publish(
             )
         else:
             candidates = [*candidates, waiting[0]]
-            held_back = max(0, held_back - 1)
-            backlog_note = (
-                f"Archive: posting 1 of {len(waiting)} waiting item(s) "
-                f"({len(recent) + 1}/{quota} today)."
-            )
+            backlog_candidate = waiting[0].id
+            backlog_waiting = len(waiting)
+            backlog_today = len(recent) + 1
+            backlog_quota = quota
     sent = db.sent_deliveries()
     tracked_articles = {article_id for _chat_id, article_id, _lang in sent}
     client = (
@@ -1105,6 +1106,14 @@ def _cmd_publish(
         if max_posts and previewed >= max_posts:
             break
         previewed += 1
+        if article.id == backlog_candidate:
+            # It reached the send loop, so the per-cycle cap left room for it.
+            held_back = max(0, held_back - 1)
+            backlog_note = (
+                f"Archive: posting 1 of {backlog_waiting} waiting item(s) "
+                f"({backlog_today}/{backlog_quota} today)."
+            )
+            backlog_candidate = None
         completions: list[bool] = []
         for lang, chat_id in pending:
             # Renditions are produced during `process` for every channel language;
@@ -1180,6 +1189,11 @@ def _cmd_publish(
         print(
             f"{held_back} processed article(s) are older than {window:g} h and stay unpublished "
             "(PUBLISH_MAX_AGE_HOURS=0 or 'publish --max-age-hours 0' posts them anyway)."
+        )
+    if backlog_candidate is not None:
+        # Appended but never reached: the news of the day used the whole cap.
+        backlog_note = (
+            f"Archive: {backlog_waiting} item(s) waiting; this cycle's cap went to fresh news."
         )
     if backlog_note:
         print(backlog_note)
