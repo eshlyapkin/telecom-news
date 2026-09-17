@@ -384,11 +384,75 @@ async function refreshQueue() {
       )
       .join("");
     fillArticleTable("table-new", data.new);
-    fillArticleTable("table-processed", data.processed);
+    await refreshPlan();
   } catch (err) {
     el("queue-kpis").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
   }
 }
+
+/* The publication plan: the order publish will follow, plus the admin actions
+   on one article. Every field is escaped — titles come from feeds. */
+async function refreshPlan() {
+  const tbody = el("table-plan").querySelector("tbody");
+  try {
+    const plan = await fetchJson("/api/publication-plan?limit=100");
+    el("plan-meta").textContent =
+      `${plan.news_waiting} news + ${plan.archive_waiting} archive waiting · ` +
+      `${plan.held} on hold · archive pace ${plan.backlog_per_day}/day, ` +
+      `${plan.backlog_min_gap_hours} h apart · ${plan.posted_last_24h} archive post(s) in the last 24 h`;
+    if (!plan.rows.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="muted">Nothing is waiting</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = plan.rows
+      .map((r) => {
+        const when = r.held
+          ? "on hold"
+          : r.lane === "archive"
+            ? fmt(r.eta)
+            : r.cycle === 1
+              ? "next cycle"
+              : `cycle +${r.cycle - 1}`;
+        return `<tr${r.held ? ' class="muted"' : ""}>
+      <td>${escapeHtml(when)}</td>
+      <td>${escapeHtml(r.lane)}</td>
+      <td>${escapeHtml(r.category || "—")}</td>
+      <td>${escapeHtml(r.source_id)}</td>
+      <td class="title"><a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || "(no title)")}</a></td>
+      <td class="actions">
+        <button type="button" class="btn ok" data-act="publish" data-id="${escapeHtml(r.id)}">Publish now</button>
+        <button type="button" class="btn" data-act="${r.held ? "release" : "hold"}" data-id="${escapeHtml(r.id)}">${r.held ? "Resume" : "Hold"}</button>
+        <button type="button" class="btn" data-act="skip" data-id="${escapeHtml(r.id)}">Remove</button>
+        <button type="button" class="btn warn" data-act="delete" data-id="${escapeHtml(r.id)}">Delete</button>
+      </td>
+    </tr>`;
+      })
+      .join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function planAction(action, id) {
+  const calls = {
+    publish: [`/api/articles/${id}/publish`, "POST"],
+    hold: [`/api/articles/${id}/hold`, "POST"],
+    release: [`/api/articles/${id}/hold`, "DELETE"],
+    skip: [`/api/articles/${id}/skip`, "POST"],
+    delete: [`/api/articles/${id}`, "DELETE"],
+  };
+  const [url, method] = calls[action];
+  if (action === "publish" && !confirm(`Post article ${id} to the channel now?`)) return;
+  if (action === "delete" && !confirm(`Delete article ${id}? A later collect can bring it back — "Remove" is the one that stays.`)) return;
+  await fetchJson(url, { method });
+  await refreshQueue();
+}
+
+el("table-plan").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-act]");
+  if (!button) return;
+  planAction(button.dataset.act, button.dataset.id).catch((e) => alert(e.message));
+});
 
 let publishedCache = [];
 

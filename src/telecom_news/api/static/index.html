@@ -142,10 +142,20 @@
       <div class="table-wrap"><table id="table-new"><thead>
         <tr><th>id</th><th>source</th><th>title</th><th>published</th></tr>
       </thead><tbody></tbody></table></div>
-      <h2 class="sub">Processed (awaiting channel)</h2>
-      <div class="table-wrap"><table id="table-processed"><thead>
-        <tr><th>id</th><th>source</th><th>title</th><th>published</th></tr>
+      <h2 class="sub">Next in the channel</h2>
+      <p class="muted small" id="plan-meta"></p>
+      <div class="table-wrap"><table id="table-plan"><thead>
+        <tr><th>when</th><th>lane</th><th>category</th><th>source</th><th>title</th><th>actions</th></tr>
       </thead><tbody></tbody></table></div>
+      <p class="muted small">
+        News goes out in whole cycles — the scheduler decides the clock, so a news row
+        shows which cycle it lands in. Archive rows carry real times: this panel sets
+        their pace. <b>Publish now</b> posts one article immediately whatever the window
+        and the pace say. <b>Hold</b> parks it — it stays here and the lanes stop picking
+        it up. <b>Remove</b> takes it out of the queue for good but keeps the row, which
+        is what stops the next collect from bringing it back; <b>Delete</b> drops the row
+        and the article can be collected again.
+      </p>
     </section>
 
     <section class="panel tab-panel" id="panel-published" hidden>

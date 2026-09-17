@@ -261,6 +261,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not post articles older than N hours "
         "(default: PUBLISH_MAX_AGE_HOURS, 48; 0 = post everything)",
     )
+    publish_parser.add_argument(
+        "--article-id",
+        type=int,
+        default=None,
+        metavar="ID",
+        help="Publish exactly this processed article now, ignoring the freshness "
+        "window, the evergreen pace and any hold on it",
+    )
 
     prune_parser = subparsers.add_parser(
         "prune",
@@ -969,40 +977,12 @@ def _cmd_process(
     return 0
 
 
-# Order the evergreen lane works through its queue. The channel exists for
-# reference material first (operator, 2026-09-17): protocol and architecture
-# walkthroughs ahead of everything, regulation last — it is the class the
-# operator ranks lowest. Collection order would have posted six legal articles
-# before the first technical one purely because they were fetched a day earlier.
-# A category the list does not name sorts after all of them.
-EVERGREEN_CATEGORY_ORDER: tuple[str, ...] = (
-    "network_protocol",
-    "technology",
-    "event",
-    "aggregator",
-    "carrier",
-    "vendor",
-    "ma_investment",
-    "partnership",
-    "security_antifraud",
-    "product_service",
-    "regulation",
-)
-
-
-def evergreen_rank(category: str | None) -> int:
-    """Position of ``category`` in the evergreen queue; unknown sorts last."""
-    try:
-        return EVERGREEN_CATEGORY_ORDER.index(str(category))
-    except ValueError:
-        return len(EVERGREEN_CATEGORY_ORDER)
-
-
 def _cmd_publish(
     limit: int | None,
     dry_run: bool,
     db_path: Path | None = None,
     max_age_hours: float | None = None,
+    article_id: int | None = None,
 ) -> int:
     """Publish processed articles to the configured channel(s), one post per language.
 
@@ -1020,6 +1000,8 @@ def _cmd_publish(
 
     from .config import load_config
     from .delivery.telegram import TelegramClient, TelegramError, format_post
+    from .held_articles import load_held
+    from .publication_plan import evergreen_rank
     from .storage.database import Database
 
     if limit is not None and limit < 1:
@@ -1064,8 +1046,34 @@ def _cmd_publish(
     max_posts = limit if limit is not None else int(config.publish_max_per_cycle)
     window = config.publish_max_age_hours if max_age_hours is None else float(max_age_hours)
     since = datetime.now(timezone.utc) - timedelta(hours=window) if window > 0 else None
-    candidates = db.recent_articles(statuses=("processed", "published"), since=since)
-    held_back = db.count_stale(status="processed", cutoff=since) if since is not None else 0
+    if article_id is not None:
+        # One article, on the operator's explicit instruction: neither the
+        # freshness window nor the evergreen pace applies, and a hold does not
+        # either — holding parks an article in the automatic lanes, it is not a
+        # lock against the person who set it. The post still counts towards the
+        # archive quota afterwards, because that count is derived from what
+        # actually reached the channel.
+        chosen = db.get_article(article_id)
+        if chosen is None:
+            print(f"error: no article with id {article_id}.", file=sys.stderr)
+            return 2
+        if chosen.status not in ("processed", "published"):
+            print(
+                f"error: article id={article_id} is '{chosen.status}'; only a processed "
+                "article can be published.",
+                file=sys.stderr,
+            )
+            return 2
+        candidates = [chosen]
+        held_back = 0
+        max_posts = 1
+    else:
+        candidates = db.recent_articles(statuses=("processed", "published"), since=since)
+        held_back = db.count_stale(status="processed", cutoff=since) if since is not None else 0
+        # Parked articles stay in the queue and out of both lanes until released.
+        held_ids = load_held(config.data_dir)
+        if held_ids:
+            candidates = [item for item in candidates if item.id not in held_ids]
     # Evergreen lane. Reference material — protocol walkthroughs, architecture
     # guides — is worth posting whatever its date, but it is not news and a
     # channel cannot take an archive as one burst. So it drips: at most
@@ -1076,11 +1084,15 @@ def _cmd_publish(
     backlog_note = ""
     backlog_candidate: int | None = None
     backlog_waiting = backlog_today = backlog_quota = 0
-    if since is not None and config.publish_backlog_per_day > 0:
+    if article_id is None and since is not None and config.publish_backlog_per_day > 0:
         moment = datetime.now(timezone.utc)
         recent = db.backlog_posts_since(since=moment - timedelta(hours=24), window_hours=window)
         waiting = sorted(
-            db.stale_articles(status="processed", cutoff=since),
+            (
+                item
+                for item in db.stale_articles(status="processed", cutoff=since)
+                if item.id not in held_ids
+            ),
             key=lambda item: (evergreen_rank(item.category), item.id or 0),
         )
         quota = int(config.publish_backlog_per_day)
@@ -2047,7 +2059,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "process":
         return _cmd_process(args.limit)
     if args.command == "publish":
-        return _cmd_publish(args.limit, args.dry_run, max_age_hours=args.max_age_hours)
+        return _cmd_publish(
+            args.limit,
+            args.dry_run,
+            max_age_hours=args.max_age_hours,
+            article_id=args.article_id,
+        )
     if args.command == "deliver":
         return _cmd_deliver(args.limit, args.dry_run, max_age_hours=args.max_age_hours)
     if args.command == "bot":

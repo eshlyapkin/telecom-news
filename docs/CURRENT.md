@@ -70,6 +70,35 @@ evergreen publication lane, one-off pipeline runs.
 
 ---
 
+## Session 2026-09-17 (queue): what goes out next, and the power to change it
+
+With 21 archive articles scheduled days ahead, "what is published next and when"
+could only be answered by reading `publish`. The Queue tab now shows the plan
+(D-032): the order publish will follow, a cycle number for news and a real
+timestamp for archive rows, computed from the same two limits the lane enforces.
+The rolling quota is visible in it — the sixth slot jumps a full day, to the
+moment the oldest post ages out of the 24-hour window, rather than to midnight.
+
+Per-article actions: **Publish now** (`publish --article-id N`, ignoring window,
+pace and hold), **Hold/Resume**, **Remove**, **Delete**.
+
+**Hold is not a status.** It is a list of ids in `data/held_articles.json`, like
+the disabled sources: it survives re-processing, is undone without touching the
+row, and does not lock the operator out — publishing by hand still works while an
+article is held. When an article is not publishing, check the hold list before
+assuming something broke.
+
+**Remove and Delete are different on purpose.** Deduplication lives in the row,
+so deleting it lets the next `collect` of that source store the article again —
+certain for a sitemap source, whose whole archive is in every listing. `Remove`
+sets `skipped` and stays; `Delete` is the separate, confirmed button for when the
+row really must go.
+
+`EVERGREEN_CATEGORY_ORDER` moved from `cli.py` to the new
+`telecom_news.publication_plan`, which both publish and the panel now use.
+
+`pytest -q` → **466 passed**.
+
 ## Session 2026-09-17 (panel): the archive pace is an operator control
 
 `PUBLISH_BACKLOG_PER_DAY` and `PUBLISH_BACKLOG_MIN_GAP_HOURS` were env-only,

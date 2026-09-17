@@ -297,6 +297,12 @@ class Database:
             )
             return [dict(row) for row in rows]
 
+    def get_article(self, article_id: int) -> Article | None:
+        """One article by id, or None when it does not exist."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM articles WHERE id = ?", (int(article_id),)).fetchone()
+        return _row_to_article(row) if row is not None else None
+
     def oldest_with_status(self, status: str) -> Article | None:
         """Oldest article (lowest id) with ``status``, or None when there is none."""
         _validate_status(status)

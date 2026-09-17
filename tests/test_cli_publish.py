@@ -414,7 +414,7 @@ def test_the_evergreen_lane_posts_technical_material_first(
 ) -> None:
     """Collection order would have put six legal articles ahead of the first
     protocol walkthrough, purely because they were fetched a day earlier."""
-    from telecom_news.cli import evergreen_rank
+    from telecom_news.publication_plan import evergreen_rank
 
     assert evergreen_rank("network_protocol") < evergreen_rank("regulation")
     assert evergreen_rank(None) > evergreen_rank("regulation")

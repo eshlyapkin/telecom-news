@@ -39,6 +39,29 @@ pipeline behaved before the lane existed. The queue is ordered by category:
 
 ## Queue / Published
 
+**Next in the channel** is the publication plan, in the order `publish` will
+follow (D-032). A news row shows the cycle it lands in — the clock belongs to the
+scheduler outside the process — and an archive row shows a real time, because the
+panel sets that pace itself. Times account for both limits: the gap between posts
+and the rolling 24-hour quota, so the row after a full day jumps to the moment the
+oldest post ages out, not to midnight.
+
+| Button | What it does | Reversible |
+|---|---|---|
+| Publish now | posts that article immediately, ignoring the window, the pace and any hold | no — it is in the channel |
+| Hold / Resume | parks it: stays in the queue, both lanes skip it (`data/held_articles.json`) | yes |
+| Remove | `status='skipped'` — out of the queue for good, row kept | yes (set the status back) |
+| Delete | drops the row, its renditions and its delivery records | no |
+
+**Remove, not Delete, is the one that stays.** Deduplication lives in the row:
+delete it and the next `collect` of that source stores the article again, which
+is certain for a sitemap source, whose whole archive is in every listing.
+
+A manual **Publish now** of an old article still counts towards the archive quota
+— the count is derived from what actually reached the channel — so the next
+automatic drip moves out accordingly.
+
+
 Queue is what is waiting. Published is what actually went out: the post text per
 language, whether the channel copy was sent, its Telegram message id, and how many
 subscribers received it. Use it to check a rendition before blaming the model.

@@ -377,6 +377,90 @@ def create_app(registry: ProjectRegistry | None = None) -> FastAPI:
         clear_override(config.data_dir)
         return languages_for_api(config.data_dir)
 
+    @app.get("/api/publication-plan")
+    def publication_plan(limit: int = 60) -> dict[str, Any]:
+        """The order publish will follow, with real times for the archive lane."""
+        from ..publication_plan import build_plan
+        from ..storage.database import Database
+
+        current = load_config()
+        return build_plan(
+            db=Database(current.db_path),
+            data_dir=current.data_dir,
+            config=current,
+            limit=max(1, min(int(limit), 500)),
+        )
+
+    def _article_or_404(article_id: int) -> tuple[Any, Any]:
+        from ..storage.database import Database
+
+        current = load_config()
+        db = Database(current.db_path)
+        article = db.get_article(article_id)
+        if article is None:
+            raise HTTPException(status_code=404, detail=f"no article with id {article_id}")
+        return db, article
+
+    @app.post("/api/articles/{article_id}/publish")
+    def publish_article_now(article_id: int) -> dict[str, Any]:
+        """Post one article now, whatever the window, the pace or a hold say."""
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from ..cli import _cmd_publish
+
+        _article_or_404(article_id)
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            code = _cmd_publish(None, False, article_id=article_id)
+        output = buffer.getvalue().strip()
+        if code != 0:
+            raise HTTPException(status_code=400, detail=output[-500:] or "publish failed")
+        return {"id": article_id, "published": True, "output": output[-2000:]}
+
+    @app.post("/api/articles/{article_id}/hold")
+    def hold_article(article_id: int) -> dict[str, Any]:
+        """Park an article: it stays in the queue, the lanes stop picking it up."""
+        from ..held_articles import hold
+
+        _article_or_404(article_id)
+        return {"id": article_id, "held": article_id in hold(config.data_dir, article_id)}
+
+    @app.delete("/api/articles/{article_id}/hold")
+    def release_article(article_id: int) -> dict[str, Any]:
+        from ..held_articles import release
+
+        return {"id": article_id, "held": article_id in release(config.data_dir, article_id)}
+
+    @app.post("/api/articles/{article_id}/skip")
+    def skip_article(article_id: int) -> dict[str, Any]:
+        """Take it out of the queue for good, keeping the row.
+
+        Deduplication lives in that row: delete it and the next collect of the
+        same source stores the article again — certain for a sitemap source,
+        whose whole archive is in every listing. 'skipped' is therefore the
+        remove that stays removed.
+        """
+        from ..held_articles import release
+
+        db, _article = _article_or_404(article_id)
+        db.set_status(article_id, "skipped")
+        release(config.data_dir, article_id)
+        return {"id": article_id, "status": "skipped"}
+
+    @app.delete("/api/articles/{article_id}")
+    def delete_article(article_id: int) -> dict[str, Any]:
+        """Remove the row, its renditions and its delivery records.
+
+        The article can be collected again: see the note on /skip.
+        """
+        from ..held_articles import release
+
+        db, _article = _article_or_404(article_id)
+        deleted = db.delete_articles([article_id])
+        release(config.data_dir, article_id)
+        return {"id": article_id, "deleted": deleted}
+
     @app.get("/api/publish-settings")
     def publish_settings() -> dict[str, Any]:
         from ..publish_settings import settings_for_api
